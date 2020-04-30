@@ -1,0 +1,797 @@
+---
+title: "Article figures: Knipping et al., 2019"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{article_figures}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+## GRINTA! data - Saliva markers
+Exploratory Data Analysis &
+Statistical analysis of Saliva derived ELISA measurements
+
+## R Packages
+```{r, echo=TRUE}
+library(salivar)
+library(gramlyr)
+library(pacman)
+library(arm)
+library(stargazer)
+library(gdata)
+library(RCurl)
+library(purrr)
+library(readxl)
+library(RColorBrewer)
+library(wesanderson)
+library(tidyverse)
+library(docxtools)
+# remotes::install_github("uashogeschoolutrecht/toolboxr")
+library(toolboxr) 
+# remotes::install_github("uashogeschoolutrecht/citrulliner")
+
+```
+
+## Load tidy dataset
+There are two datasets in this package, one containing the raw data of the study (measured in saliva, and for comparison, a few serum markers), and one containing meta data for the measured analytes.
+```{r}
+# data(package = "salivar")
+data(package = "salivar", dataset = "data_all_tidy")
+data(package = "salivar", dataset = "analyte_annotations")
+
+data_all_tidy
+
+## check factor levels
+map(data_all_tidy, levels)
+```
+
+## Nest by analyte
+```{r}
+data_nested <- data_all_tidy %>%
+  mutate(group = analyte) %>%
+  group_by(group) %>%
+  nest()
+
+## set names $data
+names(data_nested$data) <- data_nested$group
+data_nested$data[1:3]
+```
+
+## Inspect data
+
+### Missing values
+```{r}
+sum(is.na(data_all_tidy))
+naniar::vis_miss(data_all_tidy)
+```
+
+## Check levels
+```{r}
+map(data_all_tidy, levels)
+names(data_all_tidy)
+data_all_tidy <- data_all_tidy 
+
+```
+
+# Exploratory data analysis
+
+## Distributions
+### Boxplots
+```{r}
+data_all_tidy %>%
+  ggplot(aes(x = analyte, y = log10(concentration))) +
+  geom_boxplot(aes(group = analyte)) +
+  toolboxr::rotate_axis_labels(axis = "x", angle = 90)
+```
+
+### Frequencies
+```{r}
+data_nested <- data_nested %>%
+  dplyr::mutate(histogram = map(data, salivar::plot_histogram_from_nested_df))
+
+data_nested$histogram[[1]]
+```
+
+## Per subject
+```{r, fig.width=35, fig.height=16, eval = FALSE}
+
+data_all_tidy %>%
+  ggplot(aes(x = time, y = log10(concentration))) +
+    geom_point(aes(colour = subject), 
+                   position = "jitter", 
+                   size = 1) +
+#  coord_flip() +
+    facet_grid (~ analyte, scales = "free") 
+
+```
+
+## Summary statistics
+```{r}
+data_nested <- data_nested %>%
+  mutate(summary_statistics = map(data, salivar::summarize_df))
+
+data_nested$summary_statistics[[1]]
+names(data_nested$summary_statistics) <- data_nested$group
+data_nested$summary_statistics$`IL-1ß`
+x <- data_nested$summary_statistics[["IL-1ß"]]
+x
+```
+
+# GRAPHS
+
+## Set colours
+```{r}
+RColorBrewer::display.brewer.all()
+palette <- RColorBrewer::brewer.pal(7, "Dark2")
+palette_graph <- c("#000000", palette[c(1:3,4)])
+```
+
+## All lines, individually
+```{r}
+## define image directory
+image_directory <- file.path(here::here("inst", "images"))
+dir.create(here::here(
+  "inst",
+  "images"))
+
+## argument for function test
+# analyte = "IL-1ß"
+
+print_lines <- function(analyte_x, width, height, palette){
+
+  data_plot <- data_nested$summary_statistics[[analyte_x]]
+  plot <- salivar::draw_lines(DF = data_plot, 
+                     palette_graph = palette,
+                     analyte_x = analyte_x,
+                     f.width = width, f.height = height) 
+ 
+ 
+
+
+  return(plot)
+}
+
+## test function
+print_lines("IL-4", 
+            width = 30, 
+            height = 20, 
+            palette = palette_graph)
+
+## all plots, in nested table and prints to images folder
+data_nested <- data_nested %>%
+  dplyr::mutate(plotlist_indv = 
+  map(group, 
+      print_lines, 
+      width = 30, 
+      height = 20, 
+      palette = palette_graph))
+```
+
+## Panel plots for the paper
+```{r}
+## test
+df <- data_nested$summary_statistics[["IL-4"]]
+analyte_x = "IL-4"
+
+print_lines_panel <- function(analyte_x,
+                              width, 
+                              height, 
+                              palette){
+
+  ymax_data <- max(data_nested$summary_statistics[[analyte_x]]$mean)
+  sd_max <- max(data_nested$summary_statistics[[analyte_x]]$sdev)
+  ymax <- 1.05*(ymax_data)
+  
+  ymin_data <- min(data_nested$summary_statistics[[analyte_x]]$mean)
+  ymin <- ymin_data - (0.05*ymin_data)
+  
+data_plot <- data_nested$summary_statistics[[analyte_x]]
+    
+  
+ plot <- salivar::draw_lines_panel(DF = data_plot, 
+                                        palette_graph = palette_graph,
+                                        analyte_x = analyte_x,
+                                        ymax = ymax,
+                                        ymin = ymin,
+                                        f.width = width, 
+                                        f.height = height)
+
+  
+
+  return(plot)
+}
+
+print_lines_panel(analyte_x = "IL-4",
+                  width = 30, 
+                  height = 20, 
+                  palette = palette_graph)
+
+## add all panels to nested table
+data_nested <- data_nested %>%
+  dplyr::mutate(plotlist_panel = 
+  map(group, print_lines_panel,
+             width = 30, 
+             height = 20, 
+             palette = palette_graph))
+
+data_nested$plotlist_panel[[1]]
+
+```
+
+## Select figures for panels 
+```{r}
+## list of analytes in the data
+data_nested$group
+
+panel_plot_list <- data_nested$plotlist_panel
+
+names(panel_plot_list) <- data_nested$group
+
+panel_plot_list[[1]]
+
+# figure x ; panel
+x_a <- panel_plot_list[["IL-1ß"]]
+x_b <- panel_plot_list[["IL-1 ra"]]
+x_c <- panel_plot_list[["IL-2"]]
+x_d <- panel_plot_list[["IL-4"]]
+x_e <- panel_plot_list[["IL-5"]]
+x_f <- panel_plot_list[["IL-6"]]
+
+# figure 4; panel
+y_a <- panel_plot_list[["mmp9.se"]]
+y_b <- panel_plot_list[["MMP-9"]]
+
+# figure rubuttal
+z_a <- panel_plot_list[["slpi.se"]] 
+z_b <- panel_plot_list[["SLPI"]] 
+
+```
+
+## Panels
+see: https://wilkelab.org/cowplot/articles/shared_legends.html
+
+### Figure x
+```{r, fig.width=16, fig.height=24}
+# https://cran.r-project.org/web/packages/cowplot/vignettes/shared_legends.html
+
+figure_x <- cowplot::plot_grid( x_a + theme(legend.position="none"),
+           x_b + theme(legend.position="none"),
+           x_c + theme(legend.position="none"),
+           x_d + theme(legend.position="none"),
+           x_e + theme(legend.position="none"),
+           x_f + theme(legend.position="none"),
+           align = 'vh',
+           labels = c("A", "B", "C", "D", "E", "F"),
+           hjust = -8,
+           ncol = 2,
+           nrow = 3,
+           label_size = 18
+           )
+
+figure_x
+
+legend_x <- cowplot::get_legend(x_a + theme(legend.position="bottom"))
+
+p_x <- cowplot::plot_grid(legend_x, figure_x, ncol = 1, rel_heights = c(0.05, 1))
+
+salivar::save_in_image_directory(p_x, filename = "test_x.svg", f.height = 40, f.width = 30, limitsize = FALSE)
+
+```
+
+### Figure y
+```{r, fig.width=16, fig.height=20}
+figure_y <- cowplot::plot_grid(y_a + theme(legend.position = "none"),
+           y_b + theme(legend.position = "none"),
+           align = 'vh',
+           labels = c("A", "B"),
+           hjust = -6,
+           ncol = 1,
+           nrow = 2,
+           label_size = 18
+           )
+
+
+
+legend_y <- cowplot::get_legend(y_a + theme(legend.position = "bottom"))
+
+p_y <- cowplot::plot_grid(legend_y, figure_y, ncol = 1, rel_heights = c(0.1, 1))
+
+salivar::save_in_image_directory(p_y, filename = "test_y.svg", f.height = 40, f.width = 30, limitsize = FALSE)
+
+```
+
+### Figure z
+```{r, fig.width=16, fig.height=20}
+figure_z <- cowplot::plot_grid(z_a + theme(legend.position = "none"),
+           z_b + theme(legend.position = "none"),
+           align = 'vh',
+           labels = c("A", "B"),
+           hjust = -6,
+           ncol = 1,
+           nrow = 2,
+           label_size = 18
+           )
+
+
+
+legend_z <- cowplot::get_legend(
+  
+  z_a + theme(legend.position = "bottom") +
+    theme(legend.box.margin = margin(0, 12, 0, 12)))
+
+p_z <- cowplot::plot_grid(legend_z, figure_z, ncol = 1, rel_heights = c(0.1, 1), greedy = FALSE)
+
+salivar::save_in_image_directory(p_z, filename = "test_z.svg", f.height = 40, f.width = 30, limitsize = FALSE)
+
+```
+
+## Figures kinetics paper
+
+
+
+
+
+
+
+# STATISTICAL ANALYSIS
+
+The experimental statistical design here is a matched pairs experiment in which each subject recieves the treatment (variable `protocol` P1 - P5 for GRINTA! and protocol P1, P2, P4, P6 for TEMPO!). Subjects were randomly assigned to the order in which the protocols were executed. Each subject (in GRINTA! recieved P1 as first treatment: partially randomized block design). In TEMPO! the design was a fully randomized block. During each protocol subjects were sampled over a number of consistent time points (`time` variable) 
+
+To account for this design we analyze the data first with a generalized linear model (`gls()`), then with a linear mixed effects model (`lme()`) 
+
+Subject is a random factor, for hwich random intercept are allowed in the model definition.
+
+## Linear mixed effects model (LME Models)
+
+Video : https://www.youtube.com/watch?v=nPdrWq_Sb-U
+by Erin Buchanan
+
+## Packages
+```{r, echo=TRUE}
+library(pastecs)
+library(lme4)
+library(nlme)
+```
+
+## General Linear Model
+```{r}
+
+model_gls_baseline <- function(df) {
+
+  df <- df %>% droplevels
+  
+    model <-  gls(
+    model = log_10_conc ~ 1,
+    data = df,
+    method = "ML",
+    na.action = "na.omit")
+  
+#  model_summary <- summary(model)
+  
+ return(model)
+  
+}
+
+
+model_gls_time <- function(df){
+
+  
+  df <- df %>% droplevels
+  
+    model <-  gls(
+    log_10_conc ~ time,
+    data = df,
+    method = "ML",
+    na.action = "na.omit"
+  )
+  
+  model_summary <- summary(model)
+  
+  return(model)
+  
+}
+
+
+
+model_gls_protocol <- function(df){
+
+  
+  df <- df %>% droplevels
+  
+    model <-  gls(
+    log_10_conc ~ protocol,
+    data = df,
+    method = "ML",
+    na.action = "na.omit"
+  )
+  
+  model_summary <- summary(model)
+  
+
+  return(model)
+  
+}
+
+
+model_gls_subject <- function(df){
+  
+  df <- df %>% droplevels
+  
+  model <-  gls(
+    log_10_conc ~ subject,
+    data = df,
+    method = "ML",
+    na.action = "na.omit"
+  )
+  
+  model_summary <- summary(model)
+  
+
+  return(model)
+
+  
+}
+
+model_gls_protocol_time <- function(df){
+  
+  
+  df <- df %>% droplevels
+  
+  model <-  gls(
+    log_10_conc ~ protocol + time,
+    data = df,
+    method = "ML",
+    na.action = "na.omit"
+  )
+  
+  model_summary <- summary(model)
+  
+
+  return(as.list(model))
+
+  
+}
+
+
+
+model_gls_full <- function(df) {
+  
+  
+  df <- df %>% droplevels
+  
+  model <-  gls(
+    log_10_conc ~ time + protocol + subject,
+    data = df,
+    method = "ML",
+    na.action = "na.omit"
+  )
+  
+  model_summary <- summary(model)
+  
+
+  return(model)
+
+  
+}
+
+
+
+
+```
+
+## Linear Mixed Effects Models (LME)
+```{r}
+
+model_lme_baseline <- function(df){
+  
+  
+  df <- df %>% droplevels
+  
+  model <-  lme(log_10_conc ~ 1, 
+                    data = df, 
+                    method = "ML", 
+                    na.action = "na.omit", 
+                    random = ~1|subject) 
+  
+  model_summary <- summary(model)
+  
+
+  return(model)
+  
+}
+
+
+model_lme_time <- function(df){
+  
+  df <- df %>% droplevels
+  
+  model <-  lme(log_10_conc ~ time, 
+                    data = df, 
+                    method = "ML", 
+                    na.action = "na.omit", 
+                    random = ~1|subject) 
+  
+  model_summary <- summary(model)
+  
+  
+  return(model)
+
+}
+
+
+model_lme_protocol <- function(df){
+  
+  df <- df %>% droplevels
+  
+  model <-  lme(log_10_conc ~ protocol, 
+                data = df, method = "ML", 
+                na.action = "na.omit", 
+                random = ~1|subject) 
+  
+  model_summary <- summary(model)
+  
+  
+  return(model)
+    
+}
+
+
+model_lme_protocol_time <- function(df){
+  
+  df <- df %>% droplevels
+  
+  model <-  lme(log_10_conc ~ protocol + time, 
+                data = df, method = "ML", 
+                na.action = "na.omit", 
+                random = ~1|subject) 
+  
+  model_summary <- summary(model)
+  
+  
+  return(model)
+
+}
+
+
+
+
+
+model_lme_full <- function(df){
+
+  df <- df %>% droplevels
+  
+  # df <- df %>% droplevels()
+  model <-  lme(log_10_conc ~ time + protocol, 
+                    data = df, method = "ML", 
+                    na.action = "na.omit", 
+                    random = ~1 | subject)
+
+  # model_summary <- summary(model) 
+  anova(model)
+  return(model)
+}
+
+
+
+```
+
+## Helper functions
+```{r}
+library(tidyverse)
+library(purrr)
+library(broom)
+
+## dummy var
+
+## transform function
+log10_transform <- function(df){
+  
+ 
+ df <- df %>%
+    dplyr::mutate(log_10_conc = log10(concentration+1))
+  
+  return(df)
+  
+}
+
+## extractor p-value
+extract_results_from_model <- function(model) {
+
+  model_summary <- summary(model)
+  
+  model_df <-  model_summary$tTable %>% 
+    as.data.frame() %>%
+    mutate(param = rownames(.)) %>%
+    as_tibble()
+  
+  return(model_df)
+
+}
+```
+
+## Test helpers
+```{r}
+########################################################
+# run anova and return results
+df %>% 
+  log10_transform() %>%
+  model_gls_baseline() %>%
+  extract_results_from_model()
+
+
+
+
+ model_lme_full(df = df %>% log10_transform()) %>% 
+   summary() %>%
+   print()
+ 
+ 
+
+ 
+```
+
+# Models
+
+## Apply models and helpers to data
+```{r}
+
+  data_nested <- data_nested %>%
+## baseline gls  
+  dplyr::mutate(gls_baseline = map(
+    data_log10, model_gls_baseline
+    )) %>%
+  dplyr::mutate(gls_protocol = map(
+    data_log10, model_gls_protocol 
+    )) %>%
+  dplyr::mutate(gls_time = map(
+    data_log10, model_gls_time 
+    )) %>%
+  dplyr::mutate(gls_protocol_time = map(
+    data_log10, model_gls_protocol_time 
+    )) %>%
+  dplyr::mutate(gls_subject = map(
+    data_log10, model_gls_subject 
+    )) %>%
+  
+## lme models  
+  dplyr::mutate(lme_baseline = map(
+    data_log10, model_lme_baseline 
+    )) %>%
+  dplyr::mutate(lme_protocol = map(
+    data_log10, model_lme_protocol 
+    )) %>%
+  dplyr::mutate(lme_time = map(
+    data_log10, model_gls_time 
+    )) %>%
+  dplyr::mutate(lme_protocol_time = map(
+    data_log10, model_lme_protocol_time 
+    ))
+#%>% 
+# dplyr::mutate(lmer = map(
+#    data_log10, model_lmer 
+#    ))
+ 
+
+head(nested_all_models, 3)
+  
+## add anova for camparison of models
+nested_all_models <- nested_all_models %>%
+  dplyr::mutate(
+      anova_models = pmap(list(
+        gls_baseline, 
+        gls_time, 
+        gls_protocol,
+        gls_protocol_time,
+        lme_baseline,
+        lme_time,
+        lme_protocol,
+        lme_protocol_time),
+        anova)) %>%
+  print()
+```
+
+## Anova results
+```{r}
+nested_all_models$anova_models
+```  
+
+## Interpreting the Anova results 
+For comparing the different models we formed a step-wise comparison between all models from 1 to 8. We show here eight diffrent models increasing in complexity. The most simpel model is model 1; a generalized linear model with only the intecept as predictor. The most complex model 8; a linear mixed-effects model with two predictors: 'protocol' and 'time' and their interactions, and a random component for 'subject' to allow random variation between subjects.    
+
+If the result is significant the model with lowest BIC and AIC is the best. The model for all comparisons and all conditions (analyte/center) that has the lowest BIC and AIC value is the most complex model 
+```
+model <-  lme(log_10_conc ~ protocol + time, 
+                data = df, method = "ML", 
+                na.action = "na.omit", 
+                random = ~1|subject) 
+```
+
+The results for the best model
+```{r}
+
+nested_all_models <- nested_all_models %>% 
+  dplyr::mutate(results_models = map(lme_protocol_time, 
+                                     extract_results_from_model))
+
+nested_all_models$results_models
+names(nested_all_models$results_models) <- paste(nested_all_models$analyte, nested_all_models$center, sep = "_")
+
+## isolate results
+statistics <- nested_all_models %>% 
+  unnest(results_models) %>%
+  mutate(`p-value` = round(`p-value`, 3)) %>%
+  arrange(center, analyte, param)
+  
+knitr::kable(statistics)
+```
+
+## Significant p-values
+```{r}
+signi <- statistics %>%
+  dplyr::filter(`p-value` < 0.05) 
+
+knitr::kable(signi)
+
+```
+
+## Pictures to compare the table against
+```{r}
+# brewer.pal.info
+library(ggplot2)
+
+palette_graph <- brewer.pal(4, "Set1")
+
+nested_saliva <- nested_saliva %>%
+  dplyr::mutate(graph_line = map(summary_data, line_graph_indiv)) %>% 
+  print()
+
+
+## plots
+nested_saliva$graph_line[[1]] + 
+  ggtitle(paste(nested_saliva$analyte[1],
+                nested_saliva$center[1])) 
+
+nested_saliva$graph_line[[2]] + 
+  ggtitle(paste(nested_saliva$analyte[2],
+                nested_saliva$center[2])) 
+
+nested_saliva$graph_line[[3]] + 
+  ggtitle(paste(nested_saliva$analyte[3],
+                nested_saliva$center[3])) 
+
+
+```
+
+## Multilevel design
+
+- Factors: Volunteers -> Protocol -> Time
+- IV: Protocol / Time 
+- DV: concentration
+- random effects: subject
+
+The design is repeated measures, but the model doe not neccesarily reflect this, I need to consutl with a statistician to learn if the current model has the most optimal settings to fit the data. According the AIC, and BIC criteria in 7 of the 8 `experiments`, the current model used:
+```{r}
+nested_all_models$lme_protocol_time[[1]] 
+```
+is the best model.
+
+## Conclusions,
+### Wageningen
+From the table above a clear significant contribution of protocol and time factors to the measured levels of mmp9 (serum wageningen study) and slp1 (saliva wageingen study).
+
+### Utrecht
+Protocol P2 had a clear effect on the levels of slp1 in saliva in the utrecht study, some effect for smaple-time was found on the levels of mmp9 in saliva, but no clear effect of protocols.
+
+### Groningen
+The variation in slpi levels in saliva for the Groningen samples was bigger than in the Wageningen and Utrecht study. No clear effect for P2 was found on the levels of slpi saliva, although the graphs suggest a difference (large variation?). A significant increase in levels of slpi in saliva was found for protocol 4.  
+
+## Comparison of centers
+
+<--- work in progress --->

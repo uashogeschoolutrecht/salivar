@@ -1,0 +1,846 @@
+---
+title: "Statistical Analysis, Saliva Markers GRINTA!"
+author: "Marc A.T. Teunis"
+date: "`r Sys.time()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = TRUE,
+  error = TRUE,
+  message = TRUE
+                      
+  )
+```
+
+# Session info
+for reproducibility reasons
+```{r}
+sessioninfo::session_info()
+```
+
+# Introduction
+
+The experimental statistical design here is a matched pairs experiment in which each subject recieves the treatment (variable `protocol` P1 - P5 for GRINTA! and protocol P1, P2, P4, P6 for TEMPO!). Subjects were randomly assigned to the order in which the protocols were executed. Each subject (in GRINTA! recieved P1 as first treatment: partially randomized block design). In TEMPO! the design was a fully randomized block. During each protocol subjects were sampled over a number of consistent time points (`time` variable) 
+
+To account for this design we analyze the data first with a linear model (`lm`), then with a generalized linear model (`gls()`) and with a linear mixed effects model (`lme()`). All models are compared. AIC, visual inspection of distributions of the data and model residuals, QQ plots was used to select a transformation and the best fitting model. In the analysis below we focus on the 'GRINTA!' study exclusively.  
+
+# Data preparation and exploratory data analysis
+
+## Packages
+```{r}
+library(tidyverse)
+library(gramlyr)
+library(pacman)
+library(arm)
+library(stargazer)
+library(gdata)
+library(RCurl)
+library(readxl)
+library(RColorBrewer)
+library(wesanderson)
+# install.packages("docxtools")
+library(docxtools)
+library(broom)
+library(nlme)
+#library(lme4)
+library(salivar)
+```
+
+## Data 
+
+### Load tidy dataset
+There are two datasets in this package, one containing the raw data of the study (measured in saliva, and for comparison, a few serum markers), and one containing meta data for the measured analytes.
+```{r}
+# data(package = "salivar")
+data(package = "salivar", dataset = "data_all_tidy")
+data(package = "salivar", dataset = "analyte_annotations")
+
+data_all_tidy
+
+sum(is.na(data_all_tidy))
+## check factor levels
+map(data_all_tidy[, c(1:4)], unique)
+```
+
+### Filter data only for Grinta study
+```{r}
+unique(data_all_tidy$protocol)
+```
+
+### Nest by analyte
+```{r}
+## log transform concentration and nest data for analyte
+data_nested <- data_all_tidy %>%
+  mutate(concentration_log = log(concentration)) %>%
+  group_by(analyte) %>%
+  nest()
+
+## set names $data
+names(data_nested$data) <- data_nested$analyte
+
+```
+
+### Complete data for implicit missing values (combinations that are not present in the data)
+```{r}
+subjects <- length(unique(data_slpi$subject))
+protocols <- length(unique(data_slpi$protocol))   
+times <- length(unique(data_slpi$time))   
+
+n_rows_expect <- subjects * protocols * times
+
+data_slpi %>%
+  tidyr::complete(fill = list(protocol, time))
+```
+
+### Function to calculate expected rows per analyte, and fill if neccessary
+```{r}
+expect_rows <- function(df){
+  
+  subjects <- length(unique(df$subject))
+  protocols <- length(unique(df$protocol))   
+  times <- length(unique(df$time))   
+
+  n_rows_expect <- subjects * protocols * times
+  return(n_rows_expect)
+}
+
+data_nested <- data_nested %>%
+  dplyr::mutate(
+    actual_rows = map_int(data, nrow),
+    expected_rows = map_int(data, expect_rows))
+
+data_nested$actual_rows == data_nested$expected_rows
+```
+
+**Conclusion:** No implicity missing values are present in the data so no further steps to complement the missingness are neccessary.
+
+### Missingness, visual
+```{r}
+data_nested <- data_nested %>%
+  mutate(visual_missingness = map(
+    data, naniar::vis_miss)
+    )
+names(data_nested$visual_missingness) <- data_nested$analyte
+data_nested$visual_missingness
+
+
+```
+
+## Distributions
+```{r}
+
+## add to nested dataframe, before and after log transformation
+data_nested <- data_nested %>%
+  mutate(histograms_conc = map2(
+    .x = data,
+    .y = analyte,
+    .f = plot_histogram_from_nested_df,
+    var = "concentration"
+  ),
+        histograms_conc_log = map2(
+    .x = data,
+    .y = analyte,
+    .f = plot_histogram_from_nested_df,
+    var = "concentration_log"
+  ))
+
+```
+
+### Before log transform
+```{r}
+data_nested$histograms_conc
+```
+
+### After log transform
+```{r}
+data_nested$boxplots_per_subject
+```
+
+Conclusion: most of the distributions appear to approach a normal distribution, after log transformation
+
+### Outliers, per subject
+```{r}
+data_nested <- data_nested %>%
+  mutate(boxplots_per_subject = map2(
+    .x = data,
+    .y = analyte,
+    .f = plot_boxplot_from_nested_df,
+    var_x = "subject",
+    var_y = "concentration_log"
+  ))
+i = 1:nrow(data_nested)
+data_nested$boxplots_per_subject[i]
+
+```
+
+## QQ-Norm and Shapiro tests
+**TODO**
+```{r}
+
+```
+
+# Statistical models
+
+## Resources
+
+https://www.youtube.com/watch?v=nPdrWq_Sb-U
+by Erin Buchanan
+
+## Function to apply different models to the data
+```{r}
+?salivar::model_me
+```
+
+## List of model definitions
+```{r}
+## lm models
+models_lm <- list(
+  model_lm_base = concentration_log ~ 1,
+  model_lm_protocol = concentration_log ~ protocol,
+  model_lm_protocol_time = concentration_log ~ protocol * time
+)
+
+## gls models
+models_gls <- list(
+  # intercept only
+  model_gls_base = concentration_log ~ 1, 
+  model_gls_protocol = concentration_log ~ protocol,
+  model_gls_protocol_time = concentration_log ~ protocol * time
+  )    
+
+## mixed-effects models
+models_lme <- list(
+  # intercept only
+  model_lme_base = concentration_log ~ 1,
+  model_lme_protocol = concentration_log ~ protocol,  
+  model_lme_protocol_time = concentration_log ~ protocol + time,
+  model_lme_protocol_time_int = concentration_log ~ protocol * time 
+
+  )    
+
+```
+
+## Apply models to data
+```{r}
+data_nested %>% 
+  mutate(
+## lm models
+      model_lm_base = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lm$model_lm_base,
+      type = "lm"),
+    summary_lm_base = map(
+      .x = model_lm_base,
+      .f = summary),
+    model_lm_protocol = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lm$model_lm_protocol,
+      type = "lm"),
+    summary_lm_protocol = map(
+      .x = model_lm_protocol,
+      .f = summary),
+    model_lm_protocol_time = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lm$model_lm_protocol_time,
+      type = "lm"),
+    summary_lm_protocol_time = map(
+      .x = model_lm_protocol_time,
+      .f = summary),
+## gls models
+    model_gls_base = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_gls$model_gls_base,
+      type = "lm"),
+    summary_gls_base = map(
+      .x = model_gls_base,
+      .f = summary),
+## mixed-effects models (lme)
+    model_lme_base = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lme$model_lme_base,
+      type = "lme",
+      random = ~1 | subject,
+      method = "ML", 
+      na.action = "na.omit"
+      ),
+    summary_lme_base = map(
+      .x = model_lme_base, 
+      .f = summary
+    ),
+    model_lme_protocol = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lme$model_lme_protocol,
+      type = "lme",
+      random = ~1 | subject,
+      method = "ML", 
+      na.action = "na.omit"
+      ),
+    summary_lme_protocol = map(
+      .x = model_lme_protocol, 
+      .f = summary
+    ),
+    model_lme_protocol_time = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lme$model_lme_protocol_time,
+      type = "lme",
+      random = ~1 | subject,
+      method = "ML", 
+      na.action = "na.omit"
+      ),
+    summary_lme_protocol_time = map(
+      .x = model_lme_protocol_time, 
+      .f = summary
+      ),
+    model_lme_protocol_time_int = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lme$model_lme_protocol_time_int,
+      type = "lme",
+      random = ~1 | subject,
+      method = "ML", 
+      na.action = "na.omit"
+      ),
+    summary_lme_protocol_time_int = map(
+      .x = model_lme_protocol_time_int, 
+      .f = summary
+    ),
+    model_lme_protocol_time_full = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lme$model_lme_protocol_time_int,
+      type = "lme",
+      random = ~1 | subject/protocol,
+      method = "ML", 
+      na.action = "na.omit"
+      ),
+    summary_lme_protocol_time_full = map(
+      .x = model_lme_protocol_time_full, 
+      .f = summary
+    )
+) -> data_nested
+
+data_nested
+```
+
+## What is the best model to fit the data
+
+### Compare models with anova
+```{r}
+
+
+compare_models(model_list = models)
+```
+
+
+
+## Helper functions
+```{r}
+# dummy var
+## transform function
+log10_transform <- function(df){
+  
+  df <- df %>%
+    dplyr::mutate(log_10_conc = log10(concentration+1))
+  
+  return(df)
+}
+
+## extractor p-value
+extract_results_from_model <- function(model) {
+
+  model_summary <- summary(model)
+  model_df <-  model_summary$tTable %>% 
+    as.data.frame() %>%
+    mutate(param = rownames(.)) %>%
+    as_tibble()
+  
+  return(model_df)
+
+}
+
+plot_residuals_from_model <- function(model ){
+  
+  plot <- plot(model, which=1, col=c("blue"))
+  return(plot)
+}
+
+```
+
+## Test helpers
+```{r}
+########################################################
+# run anova and return results
+df = data_nested$data[[1]]
+
+df %>% 
+  log10_transform() %>%
+  model_gls_baseline() %>%
+  extract_results_from_model()
+
+
+ model_test <- model_lme_full(
+   df = df %>% log10_transform())
+  
+ 
+model_test 
+summary(model_test)
+
+
+
+
+
+
+ 
+```
+
+# Models
+
+## Apply models and helpers to data
+```{r}
+## GLS models
+  data_nested <- data_nested %>%
+  mutate(data_log10 = map(
+    data, log10_transform)
+    ) %>%
+  dplyr::mutate(
+    gls_baseline = map(
+    data_log10, model_gls_baseline
+    )) %>%
+  dplyr::mutate(
+    gls_protocol = map(
+    data_log10, model_gls_protocol 
+    )) %>%
+  dplyr::mutate(
+    gls_time = map(
+    data_log10, model_gls_time 
+    )) %>%
+  dplyr::mutate(
+    gls_protocol_time = map(
+    data_log10, model_gls_protocol_time 
+    )) %>%
+  dplyr::mutate(
+    gls_full = map(
+    data_log10, model_gls_full 
+    )) %>%
+  
+## lme models  
+  dplyr::mutate(lme_baseline = map(
+    data_log10, model_lme_baseline 
+    )) %>%
+  dplyr::mutate(lme_protocol = map(
+    data_log10, model_lme_protocol 
+    )) %>%
+  dplyr::mutate(lme_time = map(
+    data_log10, model_gls_time 
+    )) %>%
+  dplyr::mutate(lme_protocol_time = map(
+    data_log10, model_lme_protocol_time 
+    )) %>%
+  dplyr::mutate(lme_full = map(
+    data_log10, model_lme_full 
+    )) %>%
+  dplyr::mutate(lme_repeated_measures = map(
+    data_log10, model_lme_repeated_measures 
+    ))
+
+data_nested$gls_baseline[[1]]
+data_nested$lme_full[[1]]
+data_nested$lme_repeated_measures[[1]]
+## add anova for camparison of models
+data_nested <- data_nested %>%
+  dplyr::mutate(
+      anova_models = pmap(list(
+        gls_baseline, 
+        gls_time, 
+        gls_protocol,
+        gls_protocol_time,
+        gls_full,
+        lme_baseline,
+        lme_time,
+        lme_protocol,
+        lme_protocol_time,
+        lme_full,
+        lme_repeated_measures),
+        anova)) %>%
+  print()
+
+
+names(data_nested)
+```
+
+## Anova results
+```{r}
+data_nested$anova_models
+
+df = data_nested$anova_models[[1]]
+
+## extract p-values for ANOVA comparisons
+plot_p_from_anova <- function(df, analyte, significance = 0.05, ...){
+  
+  res <- df %>% 
+    as_tibble
+
+  plot_res <- res %>%
+    ggplot(aes(x = as.numeric(Model),
+               y = as.numeric(`p-value`))) +
+    geom_point() +
+    ggtitle(analyte) +
+    geom_hline(yintercept = significance, ...) +
+    coord_flip()
+
+    return(plot_res)
+}
+
+plot_p_from_anova(df = data_nested$anova_models[[1]], 
+                  analyte = data_nested$group[[1]], 
+                  significance = 0.05)
+
+## add plots to nested table
+data_nested <- data_nested %>%
+  dplyr::mutate(anova_plot = 
+                  map2(
+                   .x = anova_models, 
+                   .y = group,
+                   .f = plot_p_from_anova
+                  ))
+
+data_nested$anova_plot[[1]]
+
+
+get_information_criteria_for_model <- function(anova_model, analyte){
+  
+  tidy <- anova_model %>% tibble::as_tibble()
+  
+  tidy$analyte <- analyte
+  
+  return(tidy)
+  
+  }
+
+
+get_information_criteria_for_model(
+  anova_model = data_nested$anova_models[[1]],
+  analyte = data_nested$group[[1]]
+  )
+
+data_nested <- data_nested %>%
+  mutate(tidy_anova = map2(
+    .x = anova_models,
+    .y = group,
+    .f = get_information_criteria_for_model
+  ))
+
+data_nested$tidy_anova[[1]]
+```
+
+## Interpreting the Anova results 
+For comparing the different models we formed a step-wise comparison between all models from 1 to 9. We show here eight diffrent models increasing in complexity. The most simpel model is model 1; a generalized linear model with only the intecept as predictor. The most complex model 9; a linear mixed-effects model with two predictors: 'protocol' and 'time' and their interactions, and a random component for 'subject' to allow random variation between subjects.    
+
+If the result is significant the model with lowest BIC and AIC is the best. The model for all comparisons and all conditions that has the lowest BIC and AIC value is model 9: 
+```
+model <-  lme(log_10_conc ~ protocol * time, 
+                data = df, method = "ML", 
+                na.action = "na.omit", 
+                random = ~1|subject) 
+```
+
+The results for the best model
+```{r}
+
+nested_all_models <- nested_all_models %>% 
+  dplyr::mutate(results_models = map(lme_protocol_time, 
+                                     extract_results_from_model))
+
+
+
+nested_all_models$results_models
+names(nested_all_models$results_models) <- paste(nested_all_models$analyte, nested_all_models$center, sep = "_")
+
+## isolate results
+statistics <- nested_all_models %>% 
+  unnest(results_models) 
+#%>%
+#  mutate(`p-value` = round(`p-value`, 3)) 
+  
+
+```
+
+## Repeated mesurement corrections
+We have 27 analytes, so formally we need to correct the p-value for alpha-inflation: 
+
+```{r}
+statistics <- statistics %>%
+  dplyr::mutate(`p-value_adjust` = p.adjust(`p-value`, n = 27))
+
+statistics$`p-value_adjust`[1:5]
+
+results <- statistics %>%
+  dplyr::select(group, param, `p-value`, `p-value_adjust`)
+results
+
+
+```
+
+## Significant p-values
+We select only those analytes that show non-intecept significance for a time or protocol or both. Analytes that only show one significant result in the kinetci graph are also eliminated
+```{r}
+signi <- results %>%
+  dplyr::filter(`p-value_adjust` < 0.05,
+                param != "(Intercept)") %>%
+  arrange(group, param)
+
+signi
+
+by_analyte <- signi %>%
+  group_by(group) %>% 
+  tally() %>%
+  dplyr::filter(n > 1) %>%
+  arrange(desc(n))
+  
+by_analyte
+
+signi
+
+## save to disk
+
+readr::write_excel_csv(
+  signi, 
+  path = here::here(
+    "data",
+    "signi_results_adjusted_p.csv"
+  ))
+
+
+```
+
+## Residual plots
+```{r}
+
+model = nested_all_models$gls_baseline[[1]]
+analyte = nested_all_models$group[1]
+
+plot_fitted_vs_residuals <- function(model, analyte, ...){
+  
+
+  resids <- stats::residuals(model) %>% 
+    tibble::as_tibble()
+  fitted <- stats::fitted(model) %>% 
+    tibble::as_tibble()
+
+  df <- dplyr::bind_cols(resids,
+                         fitted)
+  
+  
+ plot <- df %>% 
+   ggplot(aes(x = value1,
+              y = value)) +
+   geom_point() +
+   ggtitle(paste(analyte, "\n", model$call)) +
+   geom_hline(yintercept = 0, ...) +
+   xlab("Fitted") +
+   ylab("Residuals")
+ 
+ return(plot) 
+} 
+
+plot_fitted_vs_residuals(model = nested_all_models$gls_baseline[[1]],
+                         analyte = nested_all_models$group[1],
+                         colour = "blue", linetype = "dashed",
+                         size = 1)
+
+plot_fitted_vs_residuals(model = nested_all_models$gls_protocol_time[[1]],
+                         analyte = nested_all_models$group[1],
+                         colour = "darkred", linetype = "dashed",
+                         size = 1)
+
+plot_fitted_vs_residuals(model = nested_all_models$lme_protocol[[1]],
+                         analyte = nested_all_models$group[1],
+                         colour = "darkred", linetype = "dashed",
+                         size = 1)
+
+plot_fitted_vs_residuals(model = nested_all_models$lme_protocol_time[[1]],
+                         analyte = nested_all_models$group[1],
+                         colour = "darkred", linetype = "dashed",
+                         size = 1)
+
+plot_fitted_vs_residuals(model = nested_all_models$lme_full[[1]],
+                         analyte = nested_all_models$group[1],
+                         colour = "darkred", linetype = "dashed",
+                         size = 1)
+
+
+
+
+nested_all_models$group
+i <- nested_all_models$group[23:27]
+
+## relevant analytes
+residuals_plotlist <- map2(.x = nested_all_models$lme_protocol_time[23:27], 
+     .y = i,
+     .f = plot_fitted_vs_residuals)
+
+
+residuals_plotlist
+
+
+## relevant analytes - full model
+residuals_plotlist <- map2(.x = nested_all_models$lme_full[23:27], 
+     .y = i,
+     .f = plot_fitted_vs_residuals)
+
+
+residuals_plotlist
+
+```
+
+## Multilevel design
+
+- Factors: Volunteers -> Protocol -> Time
+- IV: Protocol / Time 
+- DV: concentration
+- random effects: subject
+
+The design is repeated measures, but does the current model reflect this? I need to consutl with a statistician to learn if the current model has the most optimal settings to fit the data. According the AIC, and BIC criteria in 7 of the 8 `experiments`, the current model used:
+```{r}
+nested_all_models$lme_protocol_time[[1]] 
+```
+is the best model.
+
+## Conclusions,
+
+
+
+
+## Residuals plots
+
+
+# PCA analysis
+Generate a normalized version of the data (normalize t=0 to 100%) and express every other value as a percentage of t=0
+
+## Normalize data
+```{r}
+normalize_for_protocol_P1 <- function(df){
+  
+  baseline <- df %>%
+    dplyr::filter(protocol == "P1")
+  
+  df_with_baseline <- df %>%
+    left_join(
+      baseline,
+      by = c('subject', 'time', 'analyte'),
+      suffix = c('', '.baseline')
+    )
+  # The datasets diagram and baseline are joined by matching the columns
+  # subject_fct, protocol_fct, analyte and study. Note that time_fct is NOT used
+  # to match rows because baseline only contains t = 0 rows by definition and
+  # these should be added to all other rows (t = 0.5, 1 etc.).
+  #
+  # A left join is used to prevent loss of rows from diagrams that have no
+  # matching row in baseline (i.e. no baseline value available for the given
+  # subject, protocol, analyte and study). The number of rows in the resulting
+  # dataset is equal to the the diagrams set.
+  #
+  # Suffix is added to the column names to discriminate columns from the left
+  # (diagrams) and right (baseline) dataset with equal names. In this case,
+  # nothing is added to the columns from the diagrams and '.baseline' is added to
+  # the additional columns from baseline.
+  #
+  # Rows without baseline measurement.
+  no_baseline <- df_with_baseline %>%
+    dplyr::filter(is.na(concentration.baseline))
+  
+  # Now, add a column with the normalized concentration that is calculated by
+  # dividing the concentration (of a given study, participant etc.) by the
+  # corresponding baseline concentration.
+  df_normalized <-
+    dplyr::mutate(
+      df_with_baseline,
+      normalized_concentration = concentration /
+        concentration.baseline
+    )
+  
+  
+  return(df_normalized)
+  
+}
+```
+
+Apply function to salivar dataset
+```{r}
+data_normalized_tidy <- normalize_for_protocol_P1(data_all_tidy)
+
+```
+
+Did it work?
+```{r}
+range(data_normalized_tidy$normalized_concentration)
+
+data_normalized_tidy %>%
+  ggplot(aes(x = time, y = log(normalized_concentration))) +
+  geom_point(aes(colour = analyte), position = "jitter") +
+  facet_wrap(~subject)
+```
+
+## Transform data to wide format
+```{r}
+#install.packages("maditr")
+library(maditr)
+# Do PCA on original data grinta
+data_normalized_tidy_wide <- data_normalized_tidy %>% 
+  dplyr::select(subject, protocol, time, analyte, normalized_concentration) %>%
+  dplyr::mutate(keyval = paste(subject, time, protocol, sep = '__')) %>%
+  dplyr::select(-subject, -time) %>%
+  dcast(., keyval + protocol ~ analyte, value.var = 'normalized_concentration', 
+        fun.aggregate = sum) %>% 
+  column_to_rownames('keyval')
+
+grinta_numeric2 <- grinta_original[-1]
+
+pca_wide2 <- prcomp(grinta_numeric2, center = TRUE, scale. = TRUE)
+
+summary(pca_wide2)
+
+pca_plot_data2 <- as.data.frame(pca_wide2$x) %>%
+  mutate(description = row.names(grinta_numeric2)) %>%
+  separate(description, c('subject', 'time', 'protocol'), sep = '__') %>%
+  mutate(subject = as.numeric(subject)) %>%
+  mutate(subject = as.character(subject))
+
+pca_plot2 <- ggplot(data = pca_plot_data2, aes(x = PC1, y = PC2, color = protocol, shape = time)) +
+  geom_point() +
+  theme_hc() 
+
+pca_plot2
+
+ggsave("original_pca.png")
+```
+
+
+## Actual PCA analysis
+
+
+
+
+
+
+## Reduce dimensions: Calculate area under the curve
+We will execute the following workflow:
+
+ 1. 
+ 
+
+
+
+
+
+
