@@ -13,6 +13,9 @@ model_me(df, formula, type, ...)
 form dependent_variable ~ predictors}
 
 \item{type}{One of type 'lm', 'gls' or 'lme'}
+
+\item{...}{Additional arguments passed to gls() or lme(), depending on
+the user-selected value for `type'}
 }
 \description{
 This function is a switch function allowing you to explore

@@ -1,0 +1,139 @@
+---
+title: "simulation data"
+author: "Marc A.T. Teunis"
+date: "5/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Create simulation data
+```{r, sim_data, eval=FALSE}
+library(tidyverse)
+
+set.seed(223123444)
+means <- tibble::tibble(
+  protocol = as_factor(rep(c(1:4), each = 4)),
+  time = rep(c(0, 1, 2, 4), times = 4),
+  means = c(sample(2:6, 4), sample(2:20, 4), sample(2.1:5.5, 4), sample(2:30, 4)),
+  sd = rnorm(16, 1.2, sd = 0.2)
+  )
+
+means %>%
+  group_by(protocol, time) %>%
+  summarize(mean_value = mean(means)) %>%
+  ggplot(aes(x = time, y = mean_value)) +
+    geom_line(aes(group = protocol, colour = protocol)) +
+    geom_point(aes(colour = protocol), size = 1, shape = 1)
+
+
+## generate table with observations
+n_subjects <- 4
+
+set.seed(123)
+observations <- map2(
+  .x = means$means,
+  .y = means$sd,
+  .f = rnorm,
+  n = n_subjects
+) %>%
+  as_tibble(.name_repair = "minimal") %>%
+  t() %>%
+  as_tibble(.name_repair = "unique") 
+
+observations
+names(observations) <- paste("subject", 1:n_subjects, sep = "_")
+
+## add protocol and time column
+observations$protocol <- means$protocol
+observations$time <- means$time
+
+## tidy observations
+observations_tidy <- observations %>%
+  pivot_longer(cols = c(paste("subject", 1:n_subjects, sep = "_")))
+
+
+## generate random order, except protocol 1 all subject cucled this as first protocol
+set.seed(123)
+
+get_order <- function(subject_id, start = 1, from = 2, to = 4, n = 3){
+  
+  order <- c(start, sample(from:to, n))
+  order <- enframe(order)
+  names(order) <- c("protocol", "order")
+  order$subject_id <- subject_id
+  
+  return(order)
+}  
+
+order_df <- map(.x = 1:n_subjects, 
+    .f = get_order,
+    start = 1, 
+    from = 2, to = 4, n = 3) %>%
+  dplyr::bind_rows()
+  
+  
+## join observations and order
+observations_tidy$protocol <- as.character(observations_tidy$protocol)
+order_df$protocol <- as.character(order_df$protocol)
+data_joined <- left_join(observations_tidy, order_df)
+
+```
+
+## EDA simulation data
+```{r, eda_sim_data, eval=FALSE}
+
+data_observations %>%
+  group_by(protocol, time) %>%
+  summarise(mean_value = mean(observation)) %>%
+   ggplot(aes(x = time, y = mean_value)) +
+  geom_line(aes(group = protocol, colour = protocol)) +
+  geom_point(
+    data = data_observations, 
+    aes(x = time,
+        y = observation,
+        colour = protocol), position = "jitter"
+    )
+
+```
+
+## Simulation data: Mixed model effects
+```{r, model_sim_data, eval=FALSE}
+data_joined
+formula_sim <- observation ~ protocol * time
+
+model_full_with_order_slopes <- model_me(df = data_joined,
+         formula = formula_sim,
+         type = "lme",
+         random = ~1 + time | order/subject,
+         method = "ML", 
+         na.action = "na.omit")
+
+model_full_with_order <- model_me(df = data_joined,
+         formula = formula_sim,
+         type = "lme",
+         random = ~1 | order/subject,
+         method = "ML", 
+         na.action = "na.omit") 
+
+
+model_full_no_order <- model_me(df = data_joined,
+         formula = formula_sim,
+         type = "lme",
+         random = ~1 + time | subject,
+         method = "ML", 
+         na.action = "na.omit") 
+
+
+## comparison of models
+anova(
+  model_full_no_order,
+  model_full_with_order,
+  model_full_with_order_slopes
+)
+
+
+
+```

@@ -13,6 +13,4 @@ Compare a flat list of models (no nesting) with ANOVA
 Take care that the underlying model data is equal in the
 models that are being compared, otherwise this function will fail to compare
 them
-
- @export
 }

@@ -6,6 +6,8 @@
 #' @param formula An R formula or model specification, using the expression
 #' form dependent_variable ~ predictors
 #' @param type One of type 'lm', 'gls' or 'lme'
+#' @param ... Additional arguments passed to gls() or lme(), depending on
+#' the user-selected value for `type'
 #' @details The structure for lme is the most intricate a flexible, the model
 #' formula for the fixed structure of the model can be entered as an R fomula
 #' as stated under 'formula'. The random effects can be added to the model. See

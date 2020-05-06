@@ -26,3 +26,5 @@ Imports:
     tidyr,
     readr,
     readxl
+Depends: 
+    R (>= 2.10)

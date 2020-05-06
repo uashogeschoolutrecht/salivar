@@ -69,9 +69,6 @@ summarize_df <- function(df){
 #' Toy example of a switch function for educational  puposes
 #' ## toy example
 #' @export
-
-## toy example
-
 distro <- function(n, type, ...){
 
   switch(type,
@@ -87,13 +84,13 @@ distro <- function(n, type, ...){
   return(distribution)
 }
 
-
+# TODO Create an S3 object (salivar_model_list) as input for this function
 #' Compare a flat list of models (no nesting) with ANOVA
 #' @details Take care that the underlying model data is equal in the
 #' models that are being compared, otherwise this function will fail to compare
 #' them
 #'
-#'  @export
+#' @export
 
 compare_models <- function(model_list){
 
@@ -122,15 +119,18 @@ log10_transform <- function(df){
   return(df)
 }
 
-## extractor p-value
+
 #' @export
 
-extract_results_from_model <- function(model) {
+extract_results_from_model <- function(model, digits, ...) {
 
   model_summary <- summary(model)
   model_df <-  model_summary$tTable %>%
     as.data.frame() %>%
-    mutate(param = rownames(.)) %>%
+    mutate(param = rownames(.),
+          `p-value` = format(`p-value`, ...),
+          `p-value` = as.numeric(`p-value`),
+          `p-value` = round(`p-value`, digits = digits)) %>%
     as_tibble()
 
   return(model_df)
@@ -144,4 +144,48 @@ plot_residuals_from_model <- function(model ){
   plot <- plot(model, which=1, col=c("blue"))
   return(plot)
 }
+
+#' @export
+add_grouping_value_back_to_list_column_df <- function(
+  df,
+  group_var,
+  name_var){
+
+    df_new <- df %>%
+      dplyr::mutate(name_var = group_var)
+
+    return(df_new)
+  }
+
+
+#' @export
+set_names_on_list_column <- function(sv_list_column, name_values){
+  names(sv_list_column) <- name_values
+  return(sv_list_column)
+}
+
+#' @export
+plot_model_results <- function(salivar_model_result, significance, ...){
+
+  plot_title <- salivar_model_result$name_var %>% unique()
+  salivar_model_result$order_param <- c(1:nrow(salivar_model_result))
+  signi_data <- salivar_model_result %>%
+    dplyr::filter(
+      `p-value` < significance
+    )
+
+  plot <- salivar_model_result %>%
+    ggplot(aes(x = reorder(as_factor(param), order = order_param),
+               y = as.numeric(`p-value`))) +
+    geom_point() +
+    ggtitle(plot_title) +
+    coord_flip() +
+    geom_hline(yintercept = significance, ...) +
+    geom_point(data = signi_data, ...) +
+    xlab("Model parameter") +
+    ylab("P-value")
+
+  return(plot)
+}
+
 

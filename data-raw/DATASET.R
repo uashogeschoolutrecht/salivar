@@ -2,6 +2,7 @@
 
 library(tidyverse)
 
+## read data for different analytes in the paper
 data_raw <- readxl::read_xlsx(here::here(
   "data-raw",
   "Grinta study all parameters.xlsx"),
@@ -71,7 +72,8 @@ levels(data_tidy$time) == levels(data_serum_nutricia$time)
 
 
 data_all_tidy <- dplyr::bind_rows(data_tidy,
-                                  data_serum_nutricia)
+                                  data_serum_nutricia) %>%
+  dplyr::mutate(subject = as_factor(subject))
 
 ## final check on factors
 map(data_all_tidy, levels)
@@ -80,9 +82,41 @@ map(data_all_tidy, levels)
 
 usethis::use_data(data_all_tidy, overwrite = TRUE)
 
+## analyte annotations
 analyte_annotations <- readxl::read_excel(
   path = here::here("data-raw",
                     "Copy of analytes_complete_ref_unit_SKa.xlsx"),
                     sheet = 1)
 
 usethis::use_data(analyte_annotations, overwrite = TRUE)
+
+## read data for order in which subjects cycled the protocols
+library(docxtractr)
+
+## extract table from original MS Word file
+docx <- docxtractr::read_docx(path = here::here(
+  "data-raw",
+  "Randomisation scheme_15 volunteers_GRINTA.docx"))
+docx_tables <- docxtractr::docx_extract_all_tbls(
+  docx = docx)
+data_order <- docx_tables[[2]]
+
+names(data_order) <- c("subject", "order_1", "order_2", "order_3", "order_4", "order_5")
+## tidy data
+data_order_tidy <- data_order %>%
+  pivot_longer(
+    cols = order_1:order_5,
+    names_to = "order",
+    values_to = "protocol") %>%
+## replace - for NA
+  dplyr::mutate(
+    protocol = ifelse(protocol == "-", NA, protocol)
+    ) %>%
+  ## remove subject 8
+  dplyr::filter(subject != "8") %>%
+  mutate(subject = as_factor(subject),
+         order = as_factor(order),
+         protocol = as_factor(protocol)) %>%
+  print()
+
+usethis::use_data(data_order_tidy, overwrite = TRUE)
