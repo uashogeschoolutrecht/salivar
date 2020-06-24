@@ -8,23 +8,30 @@ data_raw <- readxl::read_xlsx(here::here(
   "Grinta study all parameters.xlsx"),
   na = "No sample")
 
+## names(data_raw)
 
+## fix values for analytes
 x <- names(data_raw)
 rex <- " \\(.*"
 str_view_all(string = x, pattern = rex)
 
 names(data_raw) <- str_replace_all(string = names(data_raw),
-                pattern = rex,
-                replacement = "") %>%
+                                   pattern = rex,
+                                   replacement = "") %>%
   print()
 
 names(data_raw)
 
+
 ## clean and tidy data_raw
 data_tidy <- data_raw %>%
-  gather(`IL-1ß`:Lactoferrin,
+  gather(`IL-1ß`:`Lactoferrin`,
          key = "analyte",
          value = "concentration")
+
+##sum(is.na(data_tidy))
+##unique(data_tidy$concentration)
+
 
 names(data_tidy) <- names(data_tidy) %>%
   tolower()
@@ -40,7 +47,19 @@ data_tidy <- data_tidy %>%
                 time = as_factor(time)) %>%
   droplevels()
 
+##sum(is.na(data_tidy))
+##naniar::vis_miss(data_tidy)
+
+
 map(data_tidy, levels)
+
+
+
+
+
+
+
+
 
 ## check factor levels
 #gramlyr::check_factor_levels(df = data_tidy,
@@ -79,7 +98,7 @@ data_all_tidy <- dplyr::bind_rows(data_tidy,
 ## final check on factors
 map(data_all_tidy, levels)
 
-
+data_all_tidy$analyte %>% unique()
 
 usethis::use_data(data_all_tidy, overwrite = TRUE)
 
