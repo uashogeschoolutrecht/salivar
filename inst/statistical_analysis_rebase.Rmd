@@ -1,0 +1,998 @@
+---
+title: "Statistical Analysis, Saliva Markers GRINTA!"
+author: "Marc A.T. Teunis"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  error = FALSE,
+  message = FALSE
+                      
+  )
+```
+
+# Session info
+for reproducibility reasons
+```{r, session}
+sessioninfo::session_info()
+```
+
+# Introduction
+
+The experimental statistical design here is a matched pairs experiment in which each subject recieves the treatment (variable `protocol` P1 - P5 for GRINTA! and protocol P1, P2, P4, P6 for TEMPO!). Subjects were randomly assigned to the order in which the protocols were executed. Each subject (in GRINTA! recieved P1 as first treatment: partially randomized block design). In TEMPO! the design was a fully randomized block. During each protocol subjects were sampled over a number of consistent time points (`time` variable) 
+
+To account for this design we analyze the data first with a linear model (`lm`), then with a generalized linear model (`gls()`) and with a linear mixed effects model (`lme()`). All models are compared. AIC, visual inspection of distributions of the data and model residuals, QQ plots was used to select a transformation and the best fitting model. In the analysis below we focus on the 'GRINTA!' study exclusively.  
+
+# Data preparation and exploratory data analysis
+
+## Packages
+```{r, packages}
+library(tidyverse)
+library(gramlyr)
+library(pacman)
+library(arm)
+library(stargazer)
+library(gdata)
+library(RCurl)
+library(readxl)
+library(RColorBrewer)
+library(wesanderson)
+# install.packages("docxtools")
+library(docxtools)
+library(broom)
+library(nlme)
+#library(lme4)
+library(salivar)
+```
+
+## Data 
+
+### Load tidy dataset
+There are two datasets in this package, one containing the raw data of the study (measured in saliva, and for comparison, a few serum markers), and one containing meta data for the measured analytes.
+
+```{r, data_load}
+# data(package = "salivar")
+data(package = "salivar", dataset = "data_all_tidy")
+data(package = "salivar", dataset = "analyte_annotations")
+data(package = "salivar", dataset = "data_order_tidy")
+
+data_all_tidy
+data_order_tidy
+sum(is.na(data_all_tidy))
+## check factor levels
+map(data_all_tidy[, c(1:4)], unique)
+map(data_order_tidy, levels)
+```
+
+### Remove subject 17 and 15, which is not valid?
+**@Shirley: Do you know if the data for volunteer 17 should be removed, or that the order for this volunteer is missing from the 'order' dataframe**
+```{r, remove_subject_17, eval=FALSE}
+data_all_tidy <- data_all_tidy %>%
+  dplyr::filter(subject != "17", ) %>% drop.levels()
+
+```
+
+### Join analyte data with order data
+```{r, join_data}
+data_all_tidy <- left_join(data_all_tidy, data_order_tidy) %>%
+  droplevels() %>%
+  mutate(
+    protocol = as_factor(protocol),
+    order = as_factor(order),
+    subject = as_factor(subject)
+  )
+
+map(data_all_tidy[, -5], unique)
+```
+
+### Nest by analyte
+```{r, nest}
+## log transform concentration and nest data for analyte
+## chack if there are zeros
+data_all_tidy %>%
+  ggplot(aes(x = concentration+1)) + ## ading 1 to all as pseudo
+  geom_histogram()
+
+data_nested <- data_all_tidy %>%
+  mutate(concentration_log = log(concentration+1)) %>% ## adding 1 to all as pseudo
+  group_by(analyte) %>%
+  nest()
+
+## set names $data
+names(data_nested$data) <- data_nested$analyte
+
+```
+
+```{r, implicit_missingness, eval=FALSE, include=FALSE}
+### Complete data for implicit missing values (combinations that are not present in the data)
+subjects <- length(unique(data_slpi$subject))
+protocols <- length(unique(data_slpi$protocol))   
+times <- length(unique(data_slpi$time))   
+
+n_rows_expect <- subjects * protocols * times
+
+```
+
+### Function to calculate expected rows per analyte, and fill if neccessary
+```{r, fun_missingness}
+expect_rows <- function(df){
+  
+  subjects <- length(unique(df$subject))
+  protocols <- length(unique(df$protocol))   
+  times <- length(unique(df$time))   
+
+  n_rows_expect <- subjects * protocols * times
+  return(n_rows_expect)
+}
+
+data_nested <- data_nested %>%
+  dplyr::mutate(
+    actual_rows = map_int(data, nrow),
+    expected_rows = map_int(data, expect_rows))
+
+all <- data_nested$actual_rows == data_nested$expected_rows
+
+stopifnot(
+all(all)
+)
+
+```
+
+**Conclusion:** No implicity missing values are present in the data so no further steps to complement the missingness are neccessary.
+
+### Missingness, visual
+```{r, visual_mssingness}
+data_nested <- data_nested %>%
+  mutate(visual_missingness = map(
+    data, naniar::vis_miss)
+    )
+names(data_nested$visual_missingness) <- data_nested$analyte
+data_nested$visual_missingness
+
+## add analytes back to data frames
+data_nested <- data_nested %>%
+  dplyr::mutate(
+    data = map2(
+      .x = data,
+      .y = analyte,
+      .f = salivar::add_grouping_value_back_to_list_column_df
+    )
+  )
+
+## check
+# data_nested$data[1:2]
+```
+
+## Distributions
+```{r, distributions}
+
+## add to nested dataframe, before and after log transformation
+data_nested <- data_nested %>%
+  mutate(histograms_conc = map2(
+    .x = data,
+    .y = analyte,
+    .f = plot_histogram_from_nested_df,
+    var = "concentration"
+  ),
+        histograms_conc_log = map2(
+    .x = data,
+    .y = analyte,
+    .f = plot_histogram_from_nested_df,
+    var = "concentration_log"
+  ))
+
+names(data_nested$histograms_conc) <- data_nested$analyte
+names(data_nested$histograms_conc_log) <- data_nested$analyte
+```
+
+### Before log transform
+```{r, before_log}
+data_nested$histograms_conc$SLPI
+data_nested$histograms_conc$mmp9.se
+```
+
+### After log transform
+```{r, after_log}
+data_nested$histograms_conc_log$SLPI
+data_nested$histograms_conc_log$mmp9.se
+```
+
+Conclusion: most of the distributions appear to approach a normal distribution, after log transformation, some do display a deviance from a normal distribution.
+
+### Outliers, per subject
+```{r}
+data_nested <- data_nested %>%
+  mutate(boxplots_per_subject = map2(
+    .x = data,
+    .y = analyte,
+    .f = plot_boxplot_from_nested_df,
+    var_x = "subject",
+    var_y = "concentration_log"
+  ))
+i = 1:nrow(data_nested)
+data_nested$boxplots_per_subject[i]
+
+```
+
+## QQ-Norm and Shapiro tests
+**TODO**
+```{r}
+
+```
+
+# Statistical models
+
+## Resources
+
+https://www.youtube.com/watch?v=nPdrWq_Sb-U
+by Erin Buchanan
+
+http://rstudio-pubs-static.s3.amazonaws.com/25354_2eeb42bf56d44cbc9ee217535aa962aa.html
+
+https://stats.stackexchange.com/questions/13784/repeated-measures-anova-with-lme-lmer-in-r-for-two-within-subject-factors
+
+https://stats.stackexchange.com/questions/38995/using-lme-to-analyse-a-complete-randomized-block-design-with-repeated-measures/39180#39180
+
+## Function to apply different models to the data
+This function is a core function of the `{salivar}` package and a wrapper to multiple modelling function (`lm()`, `gls()` and `lme()`). 
+```{r}
+?salivar::model_me
+```
+
+## List of model definitions
+```{r}
+## lm models
+models_lm <- list(
+  model_lm_base = concentration_log ~ 1,
+  model_lm_protocol = concentration_log ~ protocol,
+  model_lm_protocol_time = concentration_log ~ protocol * time
+)
+
+## gls models
+models_gls <- list(
+  # intercept only
+  model_gls_base = concentration_log ~ 1, 
+  model_gls_protocol = concentration_log ~ protocol,
+  model_gls_protocol_time = concentration_log ~ protocol * time
+  )    
+
+## mixed-effects models
+models_lme <- list(
+  # intercept only
+  model_lme_base = concentration_log ~ 1,
+  model_lme_protocol = concentration_log ~ protocol,  
+  model_lme_protocol_time = concentration_log ~ protocol + time,
+  model_lme_protocol_time_int = concentration_log ~ protocol * time 
+
+  )    
+
+```
+
+
+```{r, include=FALSE, eval=FALSE}
+## Test models (computation time & optimization)
+## test data (one analyte which we know shows significant changes over time and over protocols)
+model_me_safe <- safely(salivar::model_me)
+
+model_1 <- model_me_safe(
+  df = data_slpi_saliva,
+  formula = models_lme$model_lme_protocol_time_int,
+  type = "lme",
+  random = ~1 | subject,
+      method = "ML", 
+      na.action = "na.omit"
+  
+)
+
+model_2 <- model_me_safe(
+  df = data_slpi_saliva,
+  formula = models_lme$model_lme_protocol_time_int,
+  type = "lme",
+  random = ~1 | order/subject,
+      method = "ML", 
+      na.action = "na.omit"
+  
+)
+
+model_3 <- model_me_safe(
+  df = data_slpi_saliva,
+  formula = models_lme$model_lme_protocol_time_int,
+  type = "lme",
+  random = ~1 | subject/protocol,
+      method = "ML", 
+      na.action = "na.omit"
+  
+)
+
+model_1$result %>% summary %>% pluck("AIC")
+model_2$result %>% summary %>% pluck("AIC")
+model_3$result %>% summary %>% pluck("AIC")
+
+model_1$result %>% resid() %>% plot
+model_2$result %>% resid() %>% plot
+model_3$result %>% resid() %>% plot
+
+model_1$
+
+anova(model_1$result,
+      model_2$result
+  
+)
+
+```
+
+## Apply models to data
+```{r}
+data_nested %>% 
+  mutate(
+## lm models
+      model_lm_base = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lm$model_lm_base,
+      type = "lm"),
+    summary_lm_base = map(
+      .x = model_lm_base,
+      .f = summary),
+    model_lm_protocol = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lm$model_lm_protocol,
+      type = "lm"),
+    summary_lm_protocol = map(
+      .x = model_lm_protocol,
+      .f = summary),
+    model_lm_protocol_time = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lm$model_lm_protocol_time,
+      type = "lm"),
+    summary_lm_protocol_time = map(
+      .x = model_lm_protocol_time,
+      .f = summary),
+## gls models
+    model_gls_base = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_gls$model_gls_base,
+      type = "lm"),
+    summary_gls_base = map(
+      .x = model_gls_base,
+      .f = summary),
+## mixed-effects models (lme)
+    model_lme_base = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lme$model_lme_base,
+      type = "lme",
+      random = ~1 | subject,
+      method = "ML", 
+      na.action = "na.omit"
+      ),
+    summary_lme_base = map(
+      .x = model_lme_base, 
+      .f = summary
+    ),
+    model_lme_protocol = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lme$model_lme_protocol,
+      type = "lme",
+      random = ~1 | subject,
+      method = "ML", 
+      na.action = "na.omit"
+      ),
+    summary_lme_protocol = map(
+      .x = model_lme_protocol, 
+      .f = summary
+    ),
+    model_lme_protocol_time = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lme$model_lme_protocol_time,
+      type = "lme",
+      random = ~1 | subject,
+      method = "ML", 
+      na.action = "na.omit"
+      ),
+    summary_lme_protocol_time = map(
+      .x = model_lme_protocol_time, 
+      .f = summary
+      ),
+    model_lme_protocol_time_int = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lme$model_lme_protocol_time_int,
+      type = "lme",
+      random = ~1 | subject,
+      method = "ML", 
+      na.action = "na.omit"
+      ),
+    summary_lme_protocol_time_int = map(
+      .x = model_lme_protocol_time_int, 
+      .f = summary
+    ),
+    model_lme_protocol_time_full = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lme$model_lme_protocol_time_int,
+      type = "lme",
+      random = ~1 | protocol/subject,
+      method = "ML", 
+      na.action = "na.omit"
+      ),
+    summary_lme_protocol_time_full = map(
+      .x = model_lme_protocol_time_full, 
+      .f = summary
+    ),
+    model_lme_protocol_time_full_order = map(
+      .x = data,
+      .f = salivar::model_me,
+      formula = models_lme$model_lme_protocol_time_int,
+      type = "lme",
+      random = ~1 | order/subject,
+      method = "ML", 
+      na.action = "na.omit"
+      ),
+    summary_lme_protocol_time_full_order = map(
+      .x = model_lme_protocol_time_full_order, 
+      .f = summary
+    )
+) -> data_nested
+```
+
+## Get model AIC for lme models only
+```{r}
+
+data_nested <- data_nested %>%
+  mutate(aic_lme_base = map_dbl(summary_lme_base, pluck, "AIC"),
+         aic_lme_protocol = map_dbl(summary_lme_protocol, pluck, "AIC"),
+         aic_lme_protocol_time = map_dbl(summary_lme_protocol_time, pluck, "AIC"),
+         aic_lme_protocol_time_int = map_dbl(summary_lme_protocol_time_int, pluck, "AIC"),
+         aic_lme_full = map_dbl(summary_lme_protocol_time_full, pluck, "AIC"),
+         aic_lme_full_order = map_dbl(summary_lme_protocol_time_full_order, pluck, "AIC")
+         )
+
+data_aic <- data_nested %>%
+  dplyr::select(analyte, aic_lme_base:aic_lme_full_order) %>%
+  pivot_longer(cols = c(aic_lme_base:aic_lme_full_order), 
+               names_to = "model", 
+               values_to = "aic") 
+
+data_lme_full_order_aic <- data_aic %>%
+  dplyr::filter(model == "aic_lme_full_order")
+
+data_aic %>%
+  ggplot(aes(x = reorder(as_factor(model), aic), y = aic)) +
+  geom_point() +
+  geom_point(data = data_lme_full_order_aic, 
+             aes(x = reorder(as_factor(model), aic), y = aic), colour = "red") +
+  coord_flip() +
+  facet_wrap(~analyte)
+
+```
+
+## What is the best model to fit the data
+From the graph above we can select the model with lowest AIC, the model with order and subject as random intercepts and protocol, time and their interaction as fixed factors seems to have the lowest AIC for most analytes. The AIC information criterium for this model is indicated in red in the above graph.
+
+```{r, eval=FALSE, include=FALSE}
+### Compare models with anova
+model_comparisons_lme <- list()
+
+for(i in seq_along(1:nrow(data_nested))) {
+
+  model_comparisons_lme[[i]] <-
+salivar::compare_models(model_list = list(
+  data_nested$model_lme_base[[i]],
+  data_nested$model_lme_protocol[[i]],
+  data_nested$model_lme_protocol_time[[i]],
+  data_nested$model_lme_protocol_time_int[[i]],
+  data_nested$model_lme_protocol_time_full[[i]]
+))
+
+}
+
+## add model comparisons to nested df
+data_nested$lme_comparisons <- model_comparisons_lme
+
+plot_residuals_from_model(model = data_nested$model_lme_protocol_time_full[[26]])
+plot_residuals_from_model(model = data_nested$model_lme_protocol_time_int[[26]])
+
+data_nested$model_lme_protocol_time_full[[26]] %>% resid() %>% shapiro.test()
+data_nested$model_lme_protocol_time_full[[26]] %>% resid() %>% hist()
+  
+```
+
+## Select only the best model (with overall lowest AIC) from the data for further calculations.
+
+```{r}
+best_model <- "model_lme_protocol_time_full_order"
+
+names(data_nested)
+data_nested_best_model <- data_nested %>%
+  dplyr::select(
+    analyte,
+    data,
+    model_lme_protocol_time_full_order,
+    summary_lme_protocol_time_full_order
+    )
+
+
+```
+
+# The results for the best model
+```{r}
+data_nested_best_model <- data_nested_best_model %>% 
+  dplyr::mutate(results_models = map(model_lme_protocol_time_full_order, 
+                                     salivar::extract_results_from_model,
+                                     scientific = FALSE,
+                                     digits = 4),
+                results_models = map2(
+                  .x = results_models,
+                  .y = analyte,
+                  .f = salivar::add_grouping_value_back_to_list_column_df
+                ))
+
+
+name_values <- data_nested_best_model$analyte
+data_nested_best_model[, c(2:ncol(data_nested_best_model))] <- map(
+  .x = data_nested_best_model[, c(2:ncol(data_nested_best_model))],
+  .f = salivar::set_names_on_list_column,
+  name_values = name_values
+)
+
+```
+
+## The three analytes with most significant model parameters
+```{r}
+data_nested_best_model$results_models$mmp9.se
+data_nested_best_model$results_models$SLPI
+data_nested_best_model$results_models$`MMP-9`
+```
+
+## Plotting the significant results of the models for each analyte
+```{r}
+# TODO; create an S3 class (salivar_model_result) for the object that is input to this function 
+salivar_model_result = data_nested_best_model$results_models[[1]]
+
+## all result plots
+names(data_nested_best_model)
+data_nested_best_model <- data_nested_best_model %>%
+  mutate(result_plot = map(
+    .x = results_models,
+    .f = plot_model_results,
+    significance = 0.05,
+    colour = "red"
+  ))
+
+data_nested_best_model$result_plot
+```
+
+```{r, eval=FALSE}
+## save to disk
+paths <- map(
+  .x = paste(
+         paste0("inst/images/", str_replace_all(data_nested_best_model$analyte,
+                pattern = "\\.", replacement = "_")), 
+       "significant_p.png", sep = "_"),
+  .f = file.path()
+)
+
+paths  
+
+walk2(
+  .x = paths,
+  .y = data_nested_best_model$result_plot,
+  .f = ggsave,
+  width = 8, height = 12, units = "cm", dpi = 300
+)
+
+```
+
+## Residual plots
+```{r}
+
+model = data_nested_best_model$model_lme_protocol_time_full_order$mmp9.se
+analyte = "mmp9.se"
+
+plot_fitted_vs_residuals_scatter <- function(model, analyte, ...){
+  
+
+  resids <- stats::residuals(model) %>% 
+    tibble::as_tibble()
+  fitted <- stats::fitted(model) %>% 
+    tibble::as_tibble()
+
+  df <- dplyr::bind_cols(resids,
+                         fitted)
+  
+  
+ plot_scatter <- df %>% 
+   ggplot(aes(x = value1,
+              y = value)) +
+   geom_point(shape = 1) +
+   ggtitle(paste(analyte, "\n", model$call)) +
+   geom_hline(yintercept = 0, ...) +
+   xlab("Fitted") +
+   ylab("Residuals")
+ 
+ return(plot_scatter) 
+} 
+
+## distribution of residuals
+plot_fitted_vs_residuals_histogram <- function(model, analyte, ...){
+  
+  resids <- stats::residuals(model) %>% 
+    tibble::as_tibble()
+  fitted <- stats::fitted(model) %>% 
+    tibble::as_tibble()
+
+  df <- dplyr::bind_cols(resids,
+                         fitted)
+  
+  shap <- shapiro.test(df$value)
+  shap_result <- paste(shap$method, "p-value:", round(shap$p.value, digits = 4))
+  
+  plot_histogram <- df %>% 
+    ggplot(aes(x = value)) +
+    geom_histogram() +
+    ggtitle(paste(analyte, "\n", model$call)) +
+    annotate("text", label= shap_result, y = 10, x = 0, colour = "red")
+    
+#   geom_hline(yintercept = 0, ...) +
+  
+ return(plot_histogram) 
+} 
+
+
+## tests
+plot_fitted_vs_residuals_scatter(model = model,
+                         analyte = analyte,
+                         colour = "red", linetype = "dashed",
+                         size = 1)
+
+plot_fitted_vs_residuals_histogram(model = model,
+                         analyte = analyte,
+                         colour = "red", linetype = "dashed",
+                         size = 1)
+
+
+## add residual plots to nested dataframe
+data_nested_best_model <- data_nested_best_model %>%
+  mutate(residual_plots = map2(
+    .x = model_lme_protocol_time_full_order,
+    .y = analyte,
+    .f = plot_fitted_vs_residuals_scatter
+  ))
+
+data_nested_best_model <- data_nested_best_model %>%
+  mutate(residual_histogram_plots = map2(
+    .x = model_lme_protocol_time_full_order,
+    .y = analyte,
+    .f = plot_fitted_vs_residuals_histogram
+  ))
+
+
+data_nested_best_model$residual_plots
+data_nested_best_model$residual_histogram_plots
+```
+
+```{r, eval=FALSE}
+
+## save residual scatter plots to disk
+paths <- map(
+  .x = paste(
+         paste0("inst/images/", str_replace_all(data_nested_best_model$analyte,
+                pattern = "\\.", replacement = "_")), 
+       "residuals_best_model.png", sep = "_"),
+  .f = file.path()
+)
+
+paths  
+
+
+walk2(
+  .x = paths,
+  .y = data_nested_best_model$residual_plots,
+  .f = ggsave,
+  width = 12, height = 8, units = "cm", dpi = 300
+)
+
+```
+
+```{r, eval=FALSE}
+## save histograms to disk
+paths <- map(
+  .x = paste(
+         paste0("inst/images/", str_replace_all(data_nested_best_model$analyte,
+                pattern = "\\.", replacement = "_")), 
+       "residuals_histograms_best_model.png", sep = "_"),
+  .f = file.path()
+)
+
+paths  
+
+walk2(
+  .x = paths,
+  .y = data_nested_best_model$residual_histogram_plots,
+  .f = ggsave,
+  width = 12, height = 8, units = "cm", dpi = 300
+)
+
+## Create analyte panel
+
+```
+
+
+```{r, include=FALSE, eval=FALSE}
+## Post hoc analysis 
+library(emmeans)
+
+names(data_nested_best_model$summary_lme_protocol_time_full_order) <- 
+  data_nested_best_model$analyte
+data_nested_best_model$summary_lme_protocol_time_full_order$mmp9.se
+data_nested_best_model$summary_lme_protocol_time_full_order[[24]]
+
+## test on one model
+model_test <- data_nested_best_model$model_lme_protocol_time_full_order[[24]]
+lsd <- emmeans(model_test, pairwise ~ protocol:time)
+summary(lsd, adjust = "Tukey") 
+number_of_analytes <- 
+
+statistics <- statistics %>%
+  dplyr::mutate(`p-value_adjust` = p.adjust(`p-value`, n = 27))
+
+statistics$`p-value_adjust`[1:5]
+
+results <- statistics %>%
+  dplyr::select(group, param, `p-value`, `p-value_adjust`)
+results
+```
+
+## Multilevel design
+
+- Factors: Protocol -> Time
+- Predictors: Protocol / Time 
+- Dependent variable: concentration
+- random effects: order / subject
+
+The design is partially randomized cross-over experiment, but does the current model reflect this? I need to consult with a statistician to learn if the current model has the most optimal settings to fit the data. According the AIC, and BIC criteria  the current model used: 
+
+```
+lme(concentration_log ~ time * protocol, 
+  error = +1 | order/subject )
+```
+
+This is a random intercept model with fixed predictors: protocol (type of exercise) and time (sample collection time) and random effects factors order (order in which the subject cycled a protocol) and subject (subject id) 
+
+## Conclusions,
+
+The significant model-parameters over sample time and protocol are tallied in the following table 
+```{r}
+
+data_nested_best_model$results_models$slpi.se
+
+signi_tally <- data_nested_best_model$results_models %>%
+  dplyr::bind_rows() %>%
+  group_by(analyte) %>%
+  dplyr::select(`p-value`, analyte) %>%
+  dplyr::filter(`p-value` < 0.01) %>%
+  tally %>%
+  arrange(desc(n)) 
+
+signi_tally %>%
+  knitr::kable()
+
+```
+
+# Image panels per analyte
+
+ - One panel with all visualizations per analyte, for overview
+ - Include models and model checks (residuals, p-values, histograms, qqplot)
+
+# PCA analysis
+Generate a normalized version of the data (normalize t=0 to 100%) and express every other value as a percentage of t=0
+
+## Normalize data
+Did it work?
+
+```{r}
+data_nested <- data_nested %>%
+  mutate(data_normalized_summary = map(
+    .x = data,
+    .f = create_normalized_summary   
+        ),
+        data_normalized_summary = map2(
+          .x = data_normalized_summary,
+          .y = analyte,
+          .f = salivar::add_grouping_value_back_to_list_column_df
+        ))
+
+
+data_nested$data_normalized_summary[[1]]
+
+
+
+## Check one line
+# RColorBrewer::display.brewer.all()
+palette <- RColorBrewer::brewer.pal(7, "Dark2")
+palette_graph <- c("#000000", palette[c(1:3,4)])
+image_directory <- here::here(
+  "inst",
+  "images",
+  "normalized"
+)
+
+names(data_nested$data_normalized_summary) <- data_nested$analyte
+```
+
+## Normalized figures for: 
+
+The data has been normalized according the following formula
+
+$Yi.analyte.norm = \frac{mean(Y.analyte.t=0)}{Yi.analyte}$
+
+
+ - MMP-serum
+ - MMP-saliva
+ - SLPI-serum
+ - SLPI-saliva
+ 
+```{r, fig.height=15, fig.width= 20}
+## all normalized plots
+data_nested <- data_nested %>%
+  dplyr::mutate(normalized_plots = map2(
+    .x = data_normalized_summary,
+    .y = analyte,
+    .f = salivar::draw_lines,
+    palette_graph = palette_graph,
+    f.width = 30, 
+    f.height = 28
+    ))
+ 
+data_nested$normalized_plots <- 
+  salivar::set_names_on_list_column(
+    data_nested$normalized_plots, 
+    name_values = data_nested$analyte
+)
+
+## only mmp and slpi for serum and saliva
+data_nested$normalized_plots$mmp9.se
+data_nested$normalized_plots$`MMP-9`
+data_nested$normalized_plots$slpi.se
+data_nested$normalized_plots$SLPI
+
+```
+
+## Load data
+```{r, eval=FALSE}
+library(tidyverse)
+library(salivar)
+
+data_citrulliner <- citrulliner::citrulline_data %>%
+  dplyr::select(
+    subject,
+    protocol,
+    time,
+    analyte,
+    concentration
+  )
+
+data_salivar <- salivar::data_all_tidy %>%
+  dplyr::select(
+    subject,
+    protocol,
+    time,
+    analyte,
+    concentration
+  )
+```
+
+## PCA analysis
+For the saliva data
+```{r}
+df = data_salivar
+
+times <- unique(salivar::data_all_tidy$time)
+
+pca_plot_list <- map(
+  .x = times,
+  .f = run_pca,
+  df = df,
+  na_filter = 30
+)
+
+pca_plot_list
+```
+
+```{r, include=FALSE, eval=FALSE}
+## save to disk
+paths <- map(
+  .x = paste(
+         paste0("inst/images/", "tis",times), 
+       "pca_plot.png", sep = "_"),
+  .f = file.path()
+)
+
+walk2(
+  .x = paths,
+  .y = pca_plot_list,
+  .f = ggsave,
+  device = "png",
+  width = 12, height = 8, units = "cm", dpi = 300
+)
+
+```
+
+## <mark> PCA citrulline / immune parameters </mark>
+
+<mark> WORK IN PROGRESS </mark>
+
+
+```{r, eval=FALSE}
+## TODO
+
+data_citrulliner_wide <- data_citrulliner %>%
+  salivar::normalize_for_protocol_P1() %>%
+  dplyr::select(
+    subject, 
+    protocol, 
+    time, 
+    analyte, 
+    concentration_normalized
+  ) %>% 
+  tidyr::pivot_wider(names_from = analyte, 
+                     values_from = concentration_normalized) 
+
+data_citrulliner_wide <- data_citrulliner %>%
+  unite(col = "keval", 
+  c(subject, protocol, time), remove = FALSE)
+
+data_citrulliner_wide <- data_citrucitrulliner_wide %>%
+data_citrullinerame()
+
+rownames(data_citrulliner_wide) <- data_citrulliner_wide$keval
+
+unique(data_citrulliner_wide$keval) %>% length()
+
+# data_citrullinermissing values, the step  below removes them
+
+ddata_citrullinersalivar <- data_citrulliner_wide[ , data_citrulliner6)] %>% na.omit()
+naniar::vis_miss(data_numeric_salivar)
+
+pca_wide <- prcomp(data_numeric_salivar, center = TRUE, scale. = TRUE)
+
+summary(pca_wide)
+
+data_salivar_pca <- as.data.frame(pca_wide$x)  
+
+data_salivar_pca <- data_salivar_pca %>%
+  mutate(keyval = rownames(.)) %>%
+  separate(col = "keyval", 
+           into = c("subject", "protocol", "time"), 
+           remove = FALSE)
+
+plot_pca_salivar <- data_salivar_pca %>%
+  ggplot(aes(x = PC1, 
+             y = PC2)) +
+  geom_point(aes(colour = protocol, shape = time)) + 
+  theme_bw() 
+
+plot_pca_salivar
+
+pca_plot2 %>% ggsave(filename = 
+                       here::here(
+                         "inst",
+                         "images",
+                         "pca_plot_salivar.svg"))
+
+```

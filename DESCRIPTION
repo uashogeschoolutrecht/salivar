@@ -1,5 +1,5 @@
 Package: salivar
-Title: Accompanying package to the publication .... 
+Title: Accompanying package to the publication by Knipping et al., submitted - 2020
 Version: 1.0.1.9000
 Authors@R: 
     person(given = "Marc",
@@ -7,7 +7,12 @@ Authors@R:
            role = c("aut", "cre"),
            email = "marc.teunis@hu.nl",
            comment = c(ORCID = "YOUR-ORCID-ID"))
-Description: What the package does (one paragraph).
+Description: This is the accompanying package to the publication of 
+    Knipping et al., 2020, entitled "Salivary levels of secretory leukocyte 
+    protease inhibitor (SLPI) and matrix metallopeptidase 9 (MMP-9) 
+    reflect intensity and hydration status following endurance exercise". 
+    The package includes data, raw data graphs and the full statistical 
+    analysis.  
 License: CCBY-4.0
 Encoding: UTF-8
 LazyData: true

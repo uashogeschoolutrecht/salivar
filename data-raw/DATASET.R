@@ -8,6 +8,7 @@ data_raw <- readxl::read_xlsx(here::here(
   "Grinta study all parameters.xlsx"),
   na = "No sample")
 
+
 x <- names(data_raw)
 rex <- " \\(.*"
 str_view_all(string = x, pattern = rex)
@@ -91,17 +92,32 @@ analyte_annotations <- readxl::read_excel(
 usethis::use_data(analyte_annotations, overwrite = TRUE)
 
 ## read data for order in which subjects cycled the protocols
-library(docxtractr)
+#library(docxtractr)
 
 ## extract table from original MS Word file
-docx <- docxtractr::read_docx(path = here::here(
-  "data-raw",
-  "Randomisation scheme_15 volunteers_GRINTA.docx"))
-docx_tables <- docxtractr::docx_extract_all_tbls(
-  docx = docx)
-data_order <- docx_tables[[2]]
+# docx <- docxtractr::read_docx(path = here::here(
+#   "data-raw",
+#   "Randomisation scheme_15 volunteers_GRINTA.docx"))
+# docx_tables <- docxtractr::docx_extract_all_tbls(
+#   docx = docx)
+# data_order <- docx_tables[[2]]
 
-names(data_order) <- c("subject", "order_1", "order_2", "order_3", "order_4", "order_5")
+
+## using new datafile in Excel
+data_order <- readxl::read_xlsx(
+  here::here(
+    "data-raw",
+    "randomisatie protocol_subject_GRINTA.xlsx")
+  )
+
+names(data_order) <- c(
+  "subject",
+  "order_1",
+  "order_2",
+  "order_3",
+  "order_4",
+  "order_5"
+  )
 ## tidy data
 data_order_tidy <- data_order %>%
   pivot_longer(

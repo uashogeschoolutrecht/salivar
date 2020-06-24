@@ -1,0 +1,339 @@
+---
+title: "Article figures: Knipping et al., 2019"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{article_figures}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+## GRINTA! data - Saliva markers
+Exploratory Data Analysis &
+Statistical analysis of Saliva derived ELISA measurements
+
+## R Packages
+```{r, echo=TRUE}
+library(salivar)
+library(gramlyr)
+library(pacman)
+library(arm)
+library(stargazer)
+library(gdata)
+library(RCurl)
+library(purrr)
+library(readxl)
+library(RColorBrewer)
+library(wesanderson)
+library(tidyverse)
+library(docxtools)
+# remotes::install_github("uashogeschoolutrecht/toolboxr")
+library(toolboxr) 
+# remotes::install_github("uashogeschoolutrecht/citrulliner")
+
+```
+
+## Load tidy dataset
+There are two datasets in this package, one containing the raw data of the study (measured in saliva, and for comparison, a few serum markers), and one containing meta data for the measured analytes.
+```{r}
+# data(package = "salivar")
+data(package = "salivar", dataset = "data_all_tidy")
+data(package = "salivar", dataset = "analyte_annotations")
+
+data_all_tidy
+
+## check factor levels
+map(data_all_tidy, levels)
+```
+
+## Nest by analyte
+```{r}
+data_nested <- data_all_tidy %>%
+  mutate(group = analyte) %>%
+  group_by(group) %>%
+  nest()
+
+## set names $data
+names(data_nested$data) <- data_nested$group
+data_nested$data[1:3]
+```
+
+## Inspect data
+
+### Missing values
+```{r}
+sum(is.na(data_all_tidy))
+naniar::vis_miss(data_all_tidy)
+```
+
+## Check levels
+```{r}
+map(data_all_tidy, levels)
+names(data_all_tidy)
+data_all_tidy <- data_all_tidy 
+
+```
+
+# Exploratory data analysis
+
+## Distributions
+### Boxplots
+```{r}
+data_all_tidy %>%
+  ggplot(aes(x = analyte, y = log10(concentration))) +
+  geom_boxplot(aes(group = analyte)) +
+  toolboxr::rotate_axis_labels(axis = "x", angle = 90)
+```
+
+### Frequencies
+```{r}
+data_nested <- data_nested %>%
+  dplyr::mutate(histogram = map(data, salivar::plot_histogram_from_nested_df))
+
+data_nested$histogram[[1]]
+```
+
+## Per subject
+```{r, fig.width=35, fig.height=16, eval = FALSE}
+
+data_all_tidy %>%
+  ggplot(aes(x = time, y = log10(concentration))) +
+    geom_point(aes(colour = subject), 
+                   position = "jitter", 
+                   size = 1) +
+#  coord_flip() +
+    facet_grid (~ analyte, scales = "free") 
+
+```
+
+## Summary statistics
+```{r}
+data_nested <- data_nested %>%
+  mutate(summary_statistics = map(data, salivar::summarize_df))
+
+data_nested$summary_statistics[[1]]
+names(data_nested$summary_statistics) <- data_nested$group
+data_nested$summary_statistics$`IL-1ß`
+x <- data_nested$summary_statistics[["IL-1ß"]]
+x
+```
+
+# GRAPHS
+
+## Set colours
+```{r}
+RColorBrewer::display.brewer.all()
+palette <- RColorBrewer::brewer.pal(7, "Dark2")
+palette_graph <- c("#000000", palette[c(1:3,4)])
+```
+
+## All lines, individually
+```{r}
+## define image directory
+image_directory <- file.path(here::here("inst", "images"))
+dir.create(here::here(
+  "inst",
+  "images"))
+
+## argument for function test
+# analyte = "IL-1ß"
+
+print_lines <- function(analyte_x, width, height, palette){
+
+  data_plot <- data_nested$summary_statistics[[analyte_x]]
+  plot <- salivar::draw_lines(DF = data_plot, 
+                     palette_graph = palette,
+                     analyte_x = analyte_x,
+                     f.width = width, f.height = height) 
+ 
+ 
+
+
+  return(plot)
+}
+
+## test function
+print_lines("IL-4", 
+            width = 30, 
+            height = 20, 
+            palette = palette_graph)
+
+## all plots, in nested table and prints to images folder
+data_nested <- data_nested %>%
+  dplyr::mutate(plotlist_indv = 
+  map(group, 
+      print_lines, 
+      width = 30, 
+      height = 20, 
+      palette = palette_graph))
+```
+
+## Panel plots for the paper
+```{r}
+## test
+df <- data_nested$summary_statistics[["IL-4"]]
+analyte_x = "IL-4"
+
+print_lines_panel <- function(analyte_x,
+                              width, 
+                              height, 
+                              palette){
+
+  ymax_data <- max(data_nested$summary_statistics[[analyte_x]]$mean)
+  sd_max <- max(data_nested$summary_statistics[[analyte_x]]$sdev)
+  ymax <- 1.05*(ymax_data)
+  
+  ymin_data <- min(data_nested$summary_statistics[[analyte_x]]$mean)
+  ymin <- ymin_data - (0.05*ymin_data)
+  
+data_plot <- data_nested$summary_statistics[[analyte_x]]
+    
+  
+ plot <- salivar::draw_lines_panel(DF = data_plot, 
+                                        palette_graph = palette_graph,
+                                        analyte_x = analyte_x,
+                                        ymax = ymax,
+                                        ymin = ymin,
+                                        f.width = width, 
+                                        f.height = height)
+
+  
+
+  return(plot)
+}
+
+print_lines_panel(analyte_x = "IL-4",
+                  width = 30, 
+                  height = 20, 
+                  palette = palette_graph)
+
+## add all panels to nested table
+data_nested <- data_nested %>%
+  dplyr::mutate(plotlist_panel = 
+  map(group, print_lines_panel,
+             width = 30, 
+             height = 20, 
+             palette = palette_graph))
+
+data_nested$plotlist_panel[[1]]
+
+```
+
+## Select figures for panels 
+```{r}
+## list of analytes in the data
+data_nested$group
+
+panel_plot_list <- data_nested$plotlist_panel
+
+names(panel_plot_list) <- data_nested$group
+
+panel_plot_list[[1]]
+
+# figure x ; panel
+x_a <- panel_plot_list[["IL-1ß"]]
+x_b <- panel_plot_list[["IL-1 ra"]]
+x_c <- panel_plot_list[["IL-2"]]
+x_d <- panel_plot_list[["IL-4"]]
+x_e <- panel_plot_list[["IL-5"]]
+x_f <- panel_plot_list[["IL-6"]]
+
+# figure 4; panel
+y_a <- panel_plot_list[["mmp9.se"]]
+y_b <- panel_plot_list[["MMP-9"]]
+
+# figure rubuttal
+z_a <- panel_plot_list[["slpi.se"]] 
+z_b <- panel_plot_list[["SLPI"]] 
+
+```
+
+## Panels
+see: https://wilkelab.org/cowplot/articles/shared_legends.html
+
+### Figure x
+```{r, fig.width=16, fig.height=24}
+# https://cran.r-project.org/web/packages/cowplot/vignettes/shared_legends.html
+
+figure_x <- cowplot::plot_grid( x_a + theme(legend.position="none"),
+           x_b + theme(legend.position="none"),
+           x_c + theme(legend.position="none"),
+           x_d + theme(legend.position="none"),
+           x_e + theme(legend.position="none"),
+           x_f + theme(legend.position="none"),
+           align = 'vh',
+           labels = c("A", "B", "C", "D", "E", "F"),
+           hjust = -8,
+           ncol = 2,
+           nrow = 3,
+           label_size = 18
+           )
+
+figure_x
+
+legend_x <- cowplot::get_legend(x_a + theme(legend.position="bottom"))
+
+p_x <- cowplot::plot_grid(legend_x, figure_x, ncol = 1, rel_heights = c(0.05, 1))
+
+salivar::save_in_image_directory(p_x, filename = "test_x.svg", f.height = 40, f.width = 30, limitsize = FALSE)
+
+```
+
+### Figure y
+```{r, fig.width=16, fig.height=20}
+figure_y <- cowplot::plot_grid(y_a + theme(legend.position = "none"),
+           y_b + theme(legend.position = "none"),
+           align = 'vh',
+           labels = c("A", "B"),
+           hjust = -6,
+           ncol = 1,
+           nrow = 2,
+           label_size = 18
+           )
+
+
+
+legend_y <- cowplot::get_legend(y_a + theme(legend.position = "bottom"))
+
+p_y <- cowplot::plot_grid(legend_y, figure_y, ncol = 1, rel_heights = c(0.1, 1))
+
+salivar::save_in_image_directory(p_y, filename = "test_y.svg", f.height = 40, f.width = 30, limitsize = FALSE)
+
+```
+
+### Figure z
+```{r, fig.width=16, fig.height=20}
+figure_z <- cowplot::plot_grid(z_a + theme(legend.position = "none"),
+           z_b + theme(legend.position = "none"),
+           align = 'vh',
+           labels = c("A", "B"),
+           hjust = -6,
+           ncol = 1,
+           nrow = 2,
+           label_size = 18
+           )
+
+
+
+legend_z <- cowplot::get_legend(
+  
+  z_a + theme(legend.position = "bottom") +
+    theme(legend.box.margin = margin(0, 12, 0, 12)))
+
+p_z <- cowplot::plot_grid(legend_z, figure_z, ncol = 1, rel_heights = c(0.1, 1), greedy = FALSE)
+
+salivar::save_in_image_directory(p_z, filename = "test_z.svg", f.height = 40, f.width = 30, limitsize = FALSE)
+
+```
+
+
+
+
+
+
