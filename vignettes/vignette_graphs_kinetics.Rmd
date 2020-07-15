@@ -18,6 +18,7 @@ knitr::opts_chunk$set(echo = FALSE,
                       fig.width = 11,
                       fig.height = 5)
 ```
+
 ```{r, root}
 if(!require("rprojroot")) install.packages("rprojroot", dependencies = TRUE)
 library(rprojroot)
@@ -29,6 +30,7 @@ root
 # install.packages("gdata")
 # install.packages("stargazer")
 # install.packages("arm")
+# devtools::install_github("uashogeschoolutrecht/citrulliner")
 # library(arm)
 # library(stargazer)
 # library(gdata)
@@ -159,7 +161,10 @@ palette <- c("#000000", palette[c(1:3,4)])
 ## All lines, individually
 ```{r, eval=FALSE}
 # define image directory
+
+
 image_directory <- file.path(here::here("inst", "images", "paper"))
+dir.create(image_directory)
 
 # argument for function test
 analyte = "SLPI"
@@ -188,7 +193,8 @@ data_plot <- data_split[[analyte]]
   return(plot)
 }
 
-#ala_lines
+
+
 plot_list <- map(
   .x = levels(data_summary_filtered$analyte), 
   .f = print_lines)
@@ -219,7 +225,7 @@ print_lines_panel <- function(analyte){
 data_plot <- data_split[[analyte]]
     
   
- plot <- citrulliner::draw_lines_panel(DF = data_plot, 
+ plot <- salivar::draw_lines_panel(DF = data_plot, 
                                        palette_graph = palette, 
                                        ymax = ymax,
                                        ymin = ymin)
@@ -229,8 +235,10 @@ data_plot <- data_split[[analyte]]
   return(plot)
 }
 
+## test
+print_lines_panel("mmp9.se")
 
-panel_plot_list <- lapply(levels(data_summary_filtered$analyte), print_lines_panel)
+panel_plot_list <- map(levels(data_summary_filtered$analyte), print_lines_panel)
 names(panel_plot_list) <- levels(data_summary_filtered$analyte)
 names(panel_plot_list)
 
@@ -284,7 +292,7 @@ p1_b <- p1_b +
 
 p1_c <- p1_b + 
   ylab("Concentration(log10(ug/ml)") +
-  ggtitle("SLPI serum") + 
+  ggtitle("SLPI serum (zoom)") + 
   scale_y_continuous(trans='log10') +
   ylim(c(min(data_split[["slpi.se"]]$mean_conc) - 0.1*(min( data_split[["slpi.se"]]$mean_conc)), max(data_split[["slpi.se"]]$mean_conc) + 0.1*max(data_split[["slpi.se"]]$mean_conc)))
 
@@ -334,8 +342,8 @@ figure_1 <- cowplot::plot_grid(
            align = 'vh',
            labels = c("A", "B", "C"),
            hjust = -8,
-           ncol = 1,
-           nrow = 3,
+           ncol = 3,
+           nrow = 1,
            label_size = 18
            )
 
@@ -346,25 +354,43 @@ legend_b <- get_legend(p1_a + theme(legend.position="bottom"))
 p_1 <- plot_grid(legend_b, figure_1, ncol = 1, rel_heights = c(0.05, 1))
 p_1 %>% class
 
-ggsave(filename = file.path(root,
-                            "inst",
-                            "images",
-                            "paper",
-                            "figure_1.svg"), plot = p_1,
-       width = 30, height = 60, dpi = 250, units = "cm")
- 
-ggsave(filename = file.path(root,
-                            "inst",
-                            "images",
-                            "paper",
-                            "figure_1.png"), plot = p_1,
-       width = 30, height = 60, dpi = 250, units = "cm")
 
+dimensions <- c(width = 50, heigth = 18, dpi = 250) 
+
+## svg
+ggsave(
+  filename = file.path(
+    root,
+    "inst",
+    "images",
+    "paper",
+    "figure_1.svg"), 
+  plot = p_1,
+  width = dimensions["width"], 
+  height = dimensions["heigth"], 
+  dpi = dimensions["dpi"], 
+  units = "cm")
+ 
+## png
+ggsave(
+  filename = file.path(
+    root,
+    "inst",
+    "images",
+    "paper",
+    "figure_1.png"), 
+  plot = p_1,
+  width = dimensions["width"], 
+  height = dimensions["heigth"], 
+  dpi = dimensions["dpi"], 
+  units = "cm")
 
 ```
 
 ### Figure 2
 ```{r, fig.width=16, fig.height=20}
+dimensions <- c(width = 35, heigth = 18, dpi = 250) 
+
 
 figure_2 <- cowplot::plot_grid(
            p2_a + theme(legend.position="none"),
@@ -372,8 +398,8 @@ figure_2 <- cowplot::plot_grid(
            align = 'vh',
            labels = c("A", "B", "C"),
            hjust = -8,
-           ncol = 1,
-           nrow = 2,
+           ncol = 2,
+           nrow = 1,
            label_size = 18
            )
 
@@ -384,19 +410,34 @@ legend_b <- get_legend(p2_a + theme(legend.position="bottom"))
 p_2 <- plot_grid(legend_b, figure_2, ncol = 1, rel_heights = c(0.05, 1))
 p_2 %>% class
 
-ggsave(filename = file.path(root,
-                            "inst",
-                            "images",
-                            "paper",
-                            "figure_2.svg"), plot = p_2,
-       width = 25, height = 30, dpi = 250, units = "cm")
+## svg
+ggsave(
+  filename = file.path(
+    root,
+    "inst",
+    "images",
+    "paper",
+    "figure_2.svg"), 
+  plot = p_2,
+  width = dimensions["width"], 
+  height = dimensions["heigth"], 
+  dpi = dimensions["dpi"], 
+  units = "cm")
  
-ggsave(filename = file.path(root,
-                            "inst",
-                            "images",
-                            "paper",
-                            "figure_2.png"), plot = p_2,
-       width = 30, height = 60, dpi = 250, units = "cm")
+## png
+ggsave(
+  filename = file.path(
+    root,
+    "inst",
+    "images",
+    "paper",
+    "figure_2.png"), 
+  plot = p_2,
+  width = dimensions["width"], 
+  height = dimensions["heigth"], 
+  dpi = dimensions["dpi"], 
+  units = "cm")
+
 
 ```
 

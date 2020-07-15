@@ -7,10 +7,8 @@
 draw_lines_panel(
   DF,
   palette_graph,
-  analyte_x,
-  ymax = max(DF$mean * 1.5),
-  ymin = min(DF$mean * 1.5),
-  ...
+  ymax = max(DF$mean_conc * 1.5),
+  ymin = min(DF$mean_conc * 1.5)
 )
 }
 \arguments{

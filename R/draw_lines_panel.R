@@ -15,10 +15,8 @@
 
 draw_lines_panel <- function(DF,
                              palette_graph,
-                             analyte_x,
-                             ymax = max(DF$mean * 1.5),
-                             ymin = min(DF$mean * 1.5),
-                             ...) {
+                             ymax = max(DF$mean_conc * 1.5),
+                             ymin = min(DF$mean_conc * 1.5)) {
   ##############################
   # load library & functions
   ##############################
@@ -27,11 +25,8 @@ draw_lines_panel <- function(DF,
   ################################
   # get analyte name
   ################################
-  nameLine <- analyte_x
-
-
-    #DF$analyte[1] %>%
-    #tolower()
+  nameLine <- DF$analyte[1] %>%
+    tolower()
 
 
   nameFile <- c(nameLine)
@@ -40,47 +35,42 @@ draw_lines_panel <- function(DF,
   ################################
   # get analyte metadata
   ################################
-#  analyte_annotations <- readxl::read_excel(
-#    path =
-#      file.path(
-#        root,
-#        "data-raw",
-#        "Copy of analytes_complete_ref_unit_SKa.xlsx"
-#      ),
-#    sheet = 1
-#  )
+  analyte_annotations <- readxl::read_excel(
+    path =
+      file.path(
+        root,
+        "data-raw",
+        "Copy of analytes_complete_ref_unit_SKa.xlsx"
+      ),
+    sheet = 1
+  )
 
-  y_axis_label <- analyte_x
-
-
-    #analyte_annotations %>%
-    #dplyr::filter(tolower(analyte_short) == nameLine) %>%
-    #dplyr::select(units) %>%
-    #as.character()
+  y_axis_label <- analyte_annotations %>%
+    dplyr::filter(tolower(analyte_short) == nameLine) %>%
+    dplyr::select(units) %>%
+    as.character()
 
   ###########################
   # long name for analyte
   ###########################
-  long_name <- analyte_x
+  long_name <- analyte_annotations %>%
+    dplyr::filter(tolower(analyte_short) == nameLine) %>%
+    dplyr::select(analyte_long_name) %>%
+    as.character()
 
-    #analyte_annotations %>%
-    #dplyr::filter(tolower(analyte_short) == nameLine) %>%
-    #dplyr::select(analyte_long_name) %>%
-    #as.character()
+  firstup <- function(x) {
+    substr(x, 1, 1) <- toupper(substr(x, 1, 1))
+    x
+  }
 
-#  firstup <- function(x) {
-#    substr(x, 1, 1) <- toupper(substr(x, 1, 1))
-#    x
-#  }
-
-  plot_title <- long_name
+  plot_title <- firstup(long_name)
 
   y_lim_max <- ymax
   y_lim_min <- ymin
 
 
   plot <- ggplot2::ggplot(data = DF, aes(x = time,
-                                         y = mean,
+                                         y = mean_conc,
                                          colour = protocol)) +
     ggplot2::geom_point(
       aes(shape = protocol),
@@ -120,15 +110,15 @@ draw_lines_panel <- function(DF,
       linetype = "dashed",
       size = 1
     ) +
-    geom_label(aes(x = 1, y = ymin,
+    geom_label(aes(x = 1, y = ymin + (0.1*ymin),
                    label = "T0"), colour = "black") +
 
-    geom_label(aes(x = 2, y = ymin,
+    geom_label(aes(x = 2, y = ymin + (0.1*ymin),
                    label = "T1"), colour = "black") +
 
     ggplot2::ggtitle(plot_title) +
 
-    salivar::theme_panel()
+    citrulliner::theme_panel()
 
   ##assigning a name to the file
   png <- paste(nameFile, "panel_line.png", sep = "")
@@ -136,10 +126,10 @@ draw_lines_panel <- function(DF,
   svg <- paste(nameFile, "panel_line.svg", sep = "")
   pdf <- paste(nameFile, "panel_line.pdf", sep = "")
   ## saving the file to the imageDir
-  salivar::save_in_image_directory(svg, ...)
+  citrulliner::save_in_image_directory(svg)
   # saveInImageDirectory(eps)
-  salivar::save_in_image_directory(png, ...)
- # salivar::save_in_image_directory(pdf)
+  citrulliner::save_in_image_directory(png)
+  citrulliner::save_in_image_directory(pdf)
 
 
   return(plot)
