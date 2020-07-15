@@ -6,3 +6,5 @@ inst/doc
 inst/images
 doc
 Meta
+packrat/lib*/
+packrat/src/
