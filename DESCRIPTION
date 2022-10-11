@@ -1,6 +1,8 @@
 Package: salivar
 Title: Accompanying package to the publication by Knipping et al., submitted - 2020
 Version: 1.0.1.9000
+Year: 2022
+Date: 2022-10-11
 Authors@R: 
     person(given = "Marc",
            family = "Teunis",
